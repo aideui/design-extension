@@ -2406,7 +2406,56 @@ async function handleDomCommand(command, args) {
   }
 }
 
-window.__gcbContentVersion = '0.3.40';
+let hiddenForCapture = [];
+
+/** Full-page stitching: fixed and sticky bars would repeat on every screen. */
+function setFixedHidden(hidden) {
+  if (!hidden) {
+    for (const { el, value, priority } of hiddenForCapture) {
+      el.style.setProperty('visibility', value, priority);
+    }
+    hiddenForCapture = [];
+    return;
+  }
+  if (hiddenForCapture.length) return;
+  for (const el of document.body.querySelectorAll('*')) {
+    const position = getComputedStyle(el).position;
+    if (position !== 'fixed' && position !== 'sticky') continue;
+    hiddenForCapture.push({
+      el,
+      value: el.style.getPropertyValue('visibility'),
+      priority: el.style.getPropertyPriority('visibility'),
+    });
+    el.style.setProperty('visibility', 'hidden', 'important');
+  }
+}
+
+/** Geometry for background screenshots. Kept off handleDomCommand so the agent cursor stays hidden. */
+async function measureForCapture({ selector, scrollTo, hideFixed }) {
+  if (hideFixed != null) setFixedHidden(hideFixed);
+  if (scrollTo != null) {
+    window.scrollTo({ top: Number(scrollTo), left: 0, behavior: 'instant' });
+    await nextFrames(2, 120);
+  }
+  let rect = null;
+  if (selector) {
+    const el = queryOne(selector);
+    if (!el) return { error: `Element not found: ${selector}` };
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    await nextFrames(2, 120);
+    const box = el.getBoundingClientRect();
+    rect = { x: box.x, y: box.y, w: box.width, h: box.height };
+  }
+  const root = document.scrollingElement || document.documentElement;
+  return {
+    rect,
+    viewport: { w: window.innerWidth, h: window.innerHeight },
+    scrollY: window.scrollY,
+    scrollHeight: root.scrollHeight,
+  };
+}
+
+window.__gcbContentVersion = '0.3.41';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'ping') {
@@ -2452,6 +2501,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     } catch (err) {
       sendResponse({ error: err.message || String(err) });
     }
+    return true;
+  }
+
+  if (msg.type === 'measure') {
+    measureForCapture(msg)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ error: err.message || String(err) }));
     return true;
   }
 
