@@ -1219,8 +1219,14 @@ async function handleCommand(command, args) {
         const tab = { id: tabId };
         if (!tab?.id) return { error: 'No tab' };
         const text = args.text ?? '';
-        const selector = args.selector || 'div[role=textbox]';
+        let selector = args.selector || 'div[role=textbox]';
         await ensureContentScript(tabId);
+        // The MAIN-world paste below only understands CSS; turn a snapshot ref into one.
+        if (/^@?e\d+$/.test(selector)) {
+          const resolved = await sendToTab(tabId, { type: 'dom', command: 'resolve', args: { selector } });
+          if (resolved?.error) return { tabId, ...resolved };
+          selector = resolved.selector;
+        }
         // Contract: always move the visible cursor onto the field and click
         // it via the content-script path before any paste side-effects.
         try {
@@ -1328,6 +1334,7 @@ async function handleCommand(command, args) {
       case 'exists':
       case 'eval':
       case 'select':
+      case 'resolve':
       case 'getValue': {
         // DOM ops always use agent/work tab — never user's active tab by default
         const tabId = await resolveWorkTabId(args);

@@ -71,13 +71,34 @@ function isVisible(el) {
   return rect.width > 0 && rect.height > 0;
 }
 
+/** Refs (e1, e2…) handed out by the last snapshot. WeakRef so the page can still GC nodes. */
+const REF_PATTERN = /^@?e(\d+)$/;
+let snapshotRefs = new Map();
+
+function isRef(selector) {
+  return typeof selector === 'string' && REF_PATTERN.test(selector.trim());
+}
+
+function resolveRef(selector) {
+  const el = snapshotRefs.get(selector.trim().replace(/^@/, ''))?.deref();
+  return el && el.isConnected ? el : null;
+}
+
 function queryOne(selector) {
   if (!selector) return null;
+  if (isRef(selector)) return resolveRef(selector);
   try {
     return document.querySelector(selector);
   } catch {
     return null;
   }
+}
+
+function notFound(selector) {
+  if (isRef(selector)) {
+    return { error: `Ref ${selector} is gone (page changed or not from the last snapshot). Run snapshot again.` };
+  }
+  return { error: `Element not found: ${selector}` };
 }
 
 function sleep(ms) {
@@ -1774,53 +1795,158 @@ function startPlacer(component) {
   return promise;
 }
 
+const INTERACTIVE_SELECTOR = [
+  'a[href]',
+  'button',
+  'input:not([type="hidden"])',
+  'textarea',
+  'select',
+  'summary',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="textbox"]',
+  '[role="searchbox"]',
+  '[role="combobox"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="menuitem"]',
+  '[role="option"]',
+  '[contenteditable="true"]',
+  '[data-testid]',
+  'label:has(input[type="file"])',
+].join(', ');
+
+const IMPLICIT_ROLES = {
+  a: 'link',
+  button: 'button',
+  select: 'combobox',
+  textarea: 'textbox',
+  summary: 'button',
+};
+
+function inferRole(el) {
+  const explicit = el.getAttribute('role');
+  if (explicit) return explicit;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'input') {
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (type === 'checkbox' || type === 'radio') return type;
+    if (['button', 'submit', 'reset', 'image'].includes(type)) return 'button';
+    if (type === 'range') return 'slider';
+    if (type === 'file') return 'file';
+    return 'textbox';
+  }
+  if (el.isContentEditable) return 'textbox';
+  if (tag === 'label') return 'button';
+  return IMPLICIT_ROLES[tag] || tag;
+}
+
+function accessibleName(el) {
+  const labelledBy = el.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const text = labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.innerText || '')
+      .join(' ')
+      .trim();
+    if (text) return text;
+  }
+  const direct = el.getAttribute('aria-label') || el.getAttribute('title');
+  if (direct) return direct;
+  if (el.labels?.length) {
+    const text = [...el.labels].map((label) => label.innerText).join(' ').trim();
+    if (text) return text;
+  }
+  const text = (el.innerText || '').trim();
+  if (text) return text;
+  return el.getAttribute('placeholder') || el.getAttribute('alt') || el.querySelector?.('img[alt]')?.alt || '';
+}
+
+function elementState(el) {
+  const state = [];
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') state.push('disabled');
+  if (el.checked || el.getAttribute('aria-checked') === 'true') state.push('checked');
+  if (el.getAttribute('aria-selected') === 'true') state.push('selected');
+  const expanded = el.getAttribute('aria-expanded');
+  if (expanded) state.push(expanded === 'true' ? 'expanded' : 'collapsed');
+  if (el.required) state.push('required');
+  if (el.readOnly) state.push('readonly');
+  return state;
+}
+
+function fieldValue(el) {
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'select') return el.selectedOptions?.[0]?.text || '';
+  if (tag !== 'input' && tag !== 'textarea') return null;
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  if (type === 'password') return el.value ? '••••' : '';
+  if (['checkbox', 'radio', 'button', 'submit', 'reset', 'file'].includes(type)) return null;
+  return el.value || '';
+}
+
+/** Document plus every open shadow root, so web-component UIs are reachable. */
+function queryRoots(root = document, out = []) {
+  out.push(root);
+  for (const el of root.querySelectorAll('*')) {
+    // Skip the plugin's own place previews.
+    if (el.shadowRoot && !el.hasAttribute('data-gcb-picker')) queryRoots(el.shadowRoot, out);
+  }
+  return out;
+}
+
+function compactRecord(record) {
+  for (const key of Object.keys(record)) {
+    const value = record[key];
+    if (value == null || value === '' || (Array.isArray(value) && !value.length)) delete record[key];
+  }
+  return record;
+}
+
+/**
+ * Interactive elements, each with a ref (e1, e2…) that click / fill / wait
+ * accept in place of a CSS selector until the next snapshot.
+ */
 function collectInteractive(limit = 80) {
-  const selectors = [
-    'a[href]',
-    'button',
-    'input',
-    'textarea',
-    'select',
-    '[role="button"]',
-    '[role="link"]',
-    '[role="textbox"]',
-    '[contenteditable="true"]',
-    '[data-testid]',
-  ];
+  snapshotRefs = new Map();
   const seen = new Set();
   const items = [];
+  const viewportH = window.innerHeight;
+  const viewportW = window.innerWidth;
 
-  for (const sel of selectors) {
-    for (const el of document.querySelectorAll(sel)) {
-      if (!isVisible(el)) continue;
-      const key = el;
-      if (seen.has(key)) continue;
-      seen.add(key);
+  for (const root of queryRoots()) {
+    for (const el of root.querySelectorAll(INTERACTIVE_SELECTOR)) {
+      if (seen.has(el) || el.closest('[data-gcb-picker]') || !isVisible(el)) continue;
+      seen.add(el);
 
+      const ref = `e${items.length + 1}`;
+      snapshotRefs.set(ref, new WeakRef(el));
       const rect = el.getBoundingClientRect();
-      const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .slice(0, 120);
-
-      items.push({
-        ref: items.length + 1,
-        tag: el.tagName.toLowerCase(),
-        role: el.getAttribute('role') || null,
-        type: el.getAttribute('type') || null,
-        name: el.getAttribute('name') || null,
-        id: el.id || null,
-        testid: el.getAttribute('data-testid') || null,
-        text,
-        href: el.href || null,
-        selector: buildSelector(el),
-        rect: {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          w: Math.round(rect.width),
-          h: Math.round(rect.height),
-        },
-      });
+      const inViewport =
+        rect.bottom > 0 && rect.right > 0 && rect.top < viewportH && rect.left < viewportW;
+      const value = fieldValue(el);
+      items.push(
+        compactRecord({
+          ref,
+          role: inferRole(el),
+          name: accessibleName(el).replace(/\s+/g, ' ').slice(0, 120),
+          value: value == null ? null : value.slice(0, 120),
+          state: elementState(el),
+          tag: el.tagName.toLowerCase(),
+          type: el.getAttribute('type'),
+          testid: el.getAttribute('data-testid'),
+          href: el.getAttribute('href') ? el.href : null,
+          selector: buildSelector(el),
+          offscreen: inViewport ? null : true,
+          rect: {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            w: Math.round(rect.width),
+            h: Math.round(rect.height),
+          },
+        })
+      );
       if (items.length >= limit) return items;
     }
   }
@@ -2245,7 +2371,7 @@ async function handleDomCommand(command, args) {
         return { ok: true, x: Number(args.x), y: Number(args.y) };
       }
       const selected = args.selector ? queryOne(args.selector) : null;
-      if (!selected) return { error: `Element not found: ${args.selector}` };
+      if (!selected) return notFound(args.selector);
       const target = preferClickableTarget(selected);
       target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
       await sleep(80);
@@ -2268,7 +2394,7 @@ async function handleDomCommand(command, args) {
 
     case 'click': {
       const selected = args.selector ? queryOne(args.selector) : null;
-      if (!selected) return { error: `Element not found: ${args.selector}` };
+      if (!selected) return notFound(args.selector);
       // Always move cursor to the target and wait for arrival before clicking.
       await humanClick(selected);
       return {
@@ -2280,7 +2406,7 @@ async function handleDomCommand(command, args) {
 
     case 'focus': {
       const el = queryOne(args.selector);
-      if (!el) return { error: `Element not found: ${args.selector}` };
+      if (!el) return notFound(args.selector);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
       await sleep(50);
       await pointAtElement(el, '聚焦');
@@ -2290,7 +2416,7 @@ async function handleDomCommand(command, args) {
 
     case 'fill': {
       const el = queryOne(args.selector);
-      if (!el) return { error: `Element not found: ${args.selector}` };
+      if (!el) return notFound(args.selector);
       if (!args.skipClick) await humanClick(el);
       window.__gcbAgent?.showActivity?.();
       const text = args.text ?? '';
@@ -2345,7 +2471,7 @@ async function handleDomCommand(command, args) {
 
     case 'select': {
       const el = queryOne(args.selector);
-      if (!el) return { error: `Element not found: ${args.selector}` };
+      if (!el) return notFound(args.selector);
       await humanClick(el);
       el.value = args.value;
       el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -2353,9 +2479,15 @@ async function handleDomCommand(command, args) {
       return { ok: true };
     }
 
+    case 'resolve': {
+      const el = queryOne(args.selector);
+      if (!el) return notFound(args.selector);
+      return { selector: buildSelector(el) };
+    }
+
     case 'getValue': {
       const el = queryOne(args.selector);
-      if (!el) return { error: `Element not found: ${args.selector}` };
+      if (!el) return notFound(args.selector);
       const value =
         el.value != null
           ? el.value
@@ -2368,7 +2500,7 @@ async function handleDomCommand(command, args) {
     case 'scroll': {
       if (args.selector) {
         const el = queryOne(args.selector);
-        if (!el) return { error: `Element not found: ${args.selector}` };
+        if (!el) return notFound(args.selector);
         el.scrollIntoView({ block: args.block || 'center' });
         await sleep(50);
         await pointAtElement(el, '滚动至');
@@ -2440,7 +2572,7 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
   let rect = null;
   if (selector) {
     const el = queryOne(selector);
-    if (!el) return { error: `Element not found: ${selector}` };
+    if (!el) return notFound(selector);
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     await nextFrames(2, 120);
     const box = el.getBoundingClientRect();
@@ -2455,7 +2587,7 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
   };
 }
 
-window.__gcbContentVersion = '0.3.41';
+window.__gcbContentVersion = '0.3.42';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'ping') {
@@ -2494,7 +2626,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       const el = queryOne(msg.selector);
       if (!el) {
-        sendResponse({ error: `Element not found: ${msg.selector}` });
+        sendResponse(notFound(msg.selector));
         return true;
       }
       sendResponse({ pick: describeElement(el) });
