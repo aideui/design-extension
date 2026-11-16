@@ -2293,7 +2293,17 @@ async function handleDomCommand(command, args) {
       if (!el) return { error: `Element not found: ${args.selector}` };
       if (!args.skipClick) await humanClick(el);
       window.__gcbAgent?.showActivity?.();
-      await typeText(el, args.text ?? '', { clear: true, slow: !!args.slow });
+      const text = args.text ?? '';
+      await typeText(el, text, { clear: true, slow: !!args.slow });
+      // React can reset a field while hydrating on the first interaction; type once more.
+      const isField = 'value' in el && !el.isContentEditable;
+      if (isField && el.value !== text) {
+        await sleep(150);
+        await typeText(el, text, { clear: true });
+      }
+      if (isField && el.value !== text) {
+        return { ok: false, error: 'The page reset the value after fill.', value: el.value, selector: args.selector };
+      }
       return { ok: true, selector: args.selector };
     }
 
