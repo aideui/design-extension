@@ -1100,7 +1100,11 @@ async function clickViaCdpOrDom(tabId, args) {
 }
 
 async function handleCommand(command, args) {
-  logAction({ command, args });
+  // Keep upload payloads out of the side-panel log.
+  logAction({
+    command,
+    args: Array.isArray(args.files) ? { ...args, files: args.files.map((file) => file.name) } : args,
+  });
   if (
     command === 'release' ||
     command === 'release-agent-ui' ||
@@ -1411,6 +1415,7 @@ async function handleCommand(command, args) {
       case 'exists':
       case 'eval':
       case 'select':
+      case 'upload':
       case 'resolve':
       case 'getValue': {
         // DOM ops always use agent/work tab — never user's active tab by default

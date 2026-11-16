@@ -69,6 +69,39 @@ async function request(pathname, { method = 'GET', body } = {}) {
   return data;
 }
 
+const UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
+const MIME_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.csv': 'text/csv',
+  '.txt': 'text/plain',
+  '.json': 'application/json',
+  '.zip': 'application/zip',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+function readUploadFiles(paths) {
+  if (!paths.length) throw new Error('usage: upload <selector> <file...>');
+  let total = 0;
+  return paths.map((filePath) => {
+    const data = fs.readFileSync(filePath);
+    total += data.length;
+    if (total > UPLOAD_LIMIT_BYTES) throw new Error('upload is over 50 MB');
+    return {
+      name: path.basename(filePath),
+      type: MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+      data: data.toString('base64'),
+    };
+  });
+}
+
 function parseScreenshotArgs(rest) {
   const args = {};
   for (let i = 0; i < rest.length; i += 1) {
@@ -99,6 +132,7 @@ Commands:
   snapshot [limit]
   click <selector>
   fill <selector> <text...>
+  upload <selector> <file...>
   type <text...>
   press <key>
   wait <selector>
@@ -181,6 +215,10 @@ async function main() {
       break;
     case 'fill':
       args = { selector: rest[0], text: rest.slice(1).join(' ') };
+      if (!args.selector) throw new Error('selector required');
+      break;
+    case 'upload':
+      args = { selector: rest[0], files: readUploadFiles(rest.slice(1)) };
       if (!args.selector) throw new Error('selector required');
       break;
     case 'type':
