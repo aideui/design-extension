@@ -72,7 +72,7 @@ function isVisible(el) {
 }
 
 /** Refs (e1, e2…) handed out by the last snapshot. WeakRef so the page can still GC nodes. */
-const REF_PATTERN = /^@?e(\d+)$/;
+const REF_PATTERN = /^@?(f\d+)?e\d+$/;
 let snapshotRefs = new Map();
 
 function isRef(selector) {
@@ -1908,7 +1908,7 @@ function compactRecord(record) {
  * Interactive elements, each with a ref (e1, e2…) that click / fill / wait
  * accept in place of a CSS selector until the next snapshot.
  */
-function collectInteractive(limit = 80) {
+function collectInteractive(limit = 80, refPrefix = '') {
   snapshotRefs = new Map();
   const seen = new Set();
   const items = [];
@@ -1920,7 +1920,7 @@ function collectInteractive(limit = 80) {
       if (seen.has(el) || el.closest('[data-gcb-picker]') || !isVisible(el)) continue;
       seen.add(el);
 
-      const ref = `e${items.length + 1}`;
+      const ref = `${refPrefix}e${items.length + 1}`;
       snapshotRefs.set(ref, new WeakRef(el));
       const rect = el.getBoundingClientRect();
       const inViewport =
@@ -2065,6 +2065,8 @@ async function typeText(el, text, opts = {}) {
 
 /** Cursor CSS transition is 420ms — never act before the pointer arrives. */
 const CURSOR_ARRIVE_MS = 500;
+// Subframes get content.js alone; the agent cursor lives in the top frame only.
+const IS_TOP_FRAME = window === window.top;
 
 function agentNotify() {
   try {
@@ -2160,7 +2162,7 @@ async function pointAtElement(el, label = '', click = false) {
     } else if (agent?.moveCursor) {
       agent.moveCursor(center.x, center.y, { label: label || '' });
       await sleep(CURSOR_ARRIVE_MS);
-    } else {
+    } else if (IS_TOP_FRAME) {
       const cursor = ensureFallbackCursor();
       cursor.style.transform = `translate3d(${center.x}px, ${center.y}px, 0)`;
       cursor.style.setProperty('opacity', '1', 'important');
@@ -2314,7 +2316,7 @@ async function humanClick(el) {
     } else if (agent?.moveCursor) {
       agent.moveCursor(center.x, center.y, { label: '' });
       await sleep(CURSOR_ARRIVE_MS);
-    } else {
+    } else if (IS_TOP_FRAME) {
       const cursor = ensureFallbackCursor();
       cursor.style.transform = `translate3d(${center.x}px, ${center.y}px, 0)`;
       await sleep(CURSOR_ARRIVE_MS);
@@ -2348,7 +2350,7 @@ async function handleDomCommand(command, args) {
         url: location.href,
         title: document.title,
         text,
-        interactive: collectInteractive(args.limit || 80),
+        interactive: collectInteractive(args.limit || 80, args.frameId ? `f${args.frameId}` : ''),
       };
     }
 
@@ -2587,7 +2589,7 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
   };
 }
 
-window.__gcbContentVersion = '0.3.42';
+window.__gcbContentVersion = '0.3.43';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'ping') {
@@ -2686,12 +2688,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 });
 
-try {
-  chrome.runtime.sendMessage({ type: 'place-restore-request', url: location.href }, (res) => {
-    void chrome.runtime.lastError;
-    if (!res?.places?.length) return;
-    restorePlaceGhosts(res.places);
-    if (placeGhosts.length) broadcastPlaces();
-  });
-} catch {}
+if (IS_TOP_FRAME) {
+  try {
+    chrome.runtime.sendMessage({ type: 'place-restore-request', url: location.href }, (res) => {
+      void chrome.runtime.lastError;
+      if (!res?.places?.length) return;
+      restorePlaceGhosts(res.places);
+      if (placeGhosts.length) broadcastPlaces();
+    });
+  } catch {}
+}
 })();

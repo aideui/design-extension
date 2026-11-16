@@ -77,7 +77,6 @@ function parseScreenshotArgs(rest) {
     else if (flag === '--jpeg') args.format = 'jpeg';
     else if (flag === '--foreground') args.foreground = true;
     else if (flag === '--selector') args.selector = rest[++i];
-    else if (flag === '--tab') args.tabId = Number(rest[++i]);
     else if (flag === '--out') args.path = path.resolve(rest[++i]);
     else throw new Error(`unknown screenshot flag: ${flag}`);
   }
@@ -107,12 +106,16 @@ Commands:
   scroll [y]
   eval <expression>
   reload-extension
-  screenshot [--full] [--selector <css>] [--tab <id>] [--out <file>] [--jpeg] [--foreground]
+  frames
+  screenshot [--full] [--selector <css|ref>] [--out <file>] [--jpeg] [--foreground]
   last-pick
   start-pick
   last-place
   start-place
   raw <json>
+
+Any command takes --tab <id> (an open tab) and --frame <id> (an iframe from frames).
+Snapshot refs (e12, f3e12) work wherever a selector does.
 
 Examples:
   node cli.js goto https://x.com/home
@@ -134,11 +137,21 @@ async function main() {
     return;
   }
 
+  // --tab / --frame work on any command: target a specific tab or iframe.
+  const target = {};
+  for (const flag of ['--tab', '--frame']) {
+    const at = rest.indexOf(flag);
+    if (at === -1) continue;
+    target[flag === '--tab' ? 'tabId' : 'frameId'] = Number(rest[at + 1]);
+    rest.splice(at, 2);
+  }
+
   let command = cmd;
   let args = {};
 
   switch (cmd) {
     case 'status':
+    case 'frames':
     case 'tabs':
     case 'url':
     case 'title':
@@ -216,7 +229,7 @@ async function main() {
 
   const result = await request('/command', {
     method: 'POST',
-    body: { command, args },
+    body: { command, args: { ...args, ...target } },
   });
   console.log(JSON.stringify(result, null, 2));
 }

@@ -321,7 +321,7 @@ async function encodeCanvas(canvas, format) {
 }
 
 async function measureTab(tabId, args = {}) {
-  const result = await chrome.tabs.sendMessage(tabId, { type: 'measure', ...args });
+  const result = await chrome.tabs.sendMessage(tabId, { type: 'measure', ...args }, TOP_FRAME);
   if (!result) throw new Error('Cannot measure this page');
   if (result.error) throw new Error(result.error);
   return result;
@@ -362,6 +362,9 @@ async function takeScreenshot(args = {}) {
   const resolved = await resolveScreenshotTab(args);
   if (resolved.error) return resolved;
   const { tab } = resolved;
+  if (args.selector && frameIdFor(args)) {
+    return { error: 'Element shots inside an iframe are not supported. Pass the <iframe> element itself as the selector.' };
+  }
   const format = args.format === 'jpeg' ? 'jpeg' : 'png';
   const needsMeasure = !!(args.selector || args.fullPage);
   if (needsMeasure && !(await ensureContentScript(tab.id, { agentUi: false }))) {
@@ -440,7 +443,7 @@ async function enrichPick(pick) {
     const res = await chrome.tabs.sendMessage(tab.id, {
       type: 'describe-selector',
       selector: pick.selector,
-    });
+    }, TOP_FRAME);
     if (res?.pick?.selector) {
       return {
         ...pick,
@@ -464,7 +467,7 @@ async function startPickerOnUserTab() {
   // Overlay the visible page in place. Do not activate the tab or focus the
   // window — that yanks Chrome away from whatever the user is doing.
   try {
-    const result = await chrome.tabs.sendMessage(tab.id, { type: 'picker-start' });
+    const result = await chrome.tabs.sendMessage(tab.id, { type: 'picker-start' }, TOP_FRAME);
     if (result?.pick) await saveLastPick(result.pick);
     return { tabId: tab.id, url: tab.url, ...result };
   } catch (err) {
@@ -481,7 +484,7 @@ async function startAnnotateOnUserTab() {
   const ok = await ensureContentScript(tab.id, { agentUi: false });
   if (!ok) return { error: 'Cannot inject annotator on this page' };
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'picker-cancel' });
+    await chrome.tabs.sendMessage(tab.id, { type: 'picker-cancel' }, TOP_FRAME);
   } catch {}
   await new Promise((resolve) => setTimeout(resolve, 40));
   let screenshot = null;
@@ -498,7 +501,7 @@ async function startAnnotateOnUserTab() {
     const result = await chrome.tabs.sendMessage(tab.id, {
       type: 'annotate-start',
       screenshot,
-    });
+    }, TOP_FRAME);
     if (result?.screenshot) {
       chrome.runtime.sendMessage({ type: 'lastAnnotate', annotate: result }).catch(() => {});
     }
@@ -517,7 +520,7 @@ async function startPlaceOnUserTab(component) {
   const ok = await ensureContentScript(tab.id, { agentUi: false });
   if (!ok) return { error: 'Cannot inject placer on this page' };
   try {
-    const result = await chrome.tabs.sendMessage(tab.id, { type: 'place-start', component });
+    const result = await chrome.tabs.sendMessage(tab.id, { type: 'place-start', component }, TOP_FRAME);
     if (result?.place && !result.preview) await saveLastPlace(result.place);
     return { tabId: tab.id, url: tab.url, ...result };
   } catch (err) {
@@ -646,7 +649,7 @@ async function tabExists(tabId) {
 async function disableAgentUi(tabId) {
   if (!tabId) return;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: false, trusted: true });
+    await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: false, trusted: true }, TOP_FRAME);
   } catch {}
 }
 
@@ -837,10 +840,12 @@ async function enableAgentUi(tabId) {
   // Enabling them on the user's browsing tab steals the pointer and favicon.
   if (!tabId || tabId !== agentTabId) return;
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: true, trusted: true });
+    await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: true, trusted: true }, TOP_FRAME);
   } catch {}
 }
 
+// tabs.sendMessage without frameId reaches every frame; subframes may run content.js too.
+const TOP_FRAME = { frameId: 0 };
 const CONTENT_SCRIPTS = ['agent-ui.js', 'vendor/forge-palette.js', 'content.js'];
 const CONTENT_SCRIPT_VERSION = chrome.runtime.getManifest().version;
 
@@ -850,7 +855,7 @@ async function ensureContentScript(tabId, opts = {}) {
   // Re-injection stacks message listeners and races cursor movement on SPA sites
   // like x.com. Stale builds (version mismatch) force a tab reload once.
   try {
-    const ping = await chrome.tabs.sendMessage(tabId, { type: 'ping' });
+    const ping = await chrome.tabs.sendMessage(tabId, { type: 'ping' }, TOP_FRAME);
     if (ping?.ok && ping.version && ping.version !== CONTENT_SCRIPT_VERSION) {
       try {
         await chrome.tabs.reload(tabId);
@@ -890,7 +895,7 @@ async function ensureContentScript(tabId, opts = {}) {
   }
 
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'ping' });
+    await chrome.tabs.sendMessage(tabId, { type: 'ping' }, TOP_FRAME);
     if (agentUi) await enableAgentUi(tabId);
     return true;
   } catch {
@@ -906,13 +911,83 @@ async function markAgentTabTitle(tabId) {
   } catch {}
 }
 
+/** Snapshot refs from a subframe carry their frame: f3e12 → frameId 3. */
+function frameIdFor(args = {}) {
+  if (args.frameId != null && Number(args.frameId) > 0) return Number(args.frameId);
+  const match = typeof args.selector === 'string' && args.selector.trim().match(/^@?f(\d+)e\d+$/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function pingFrame(tabId, frameId) {
+  try {
+    const ping = await chrome.tabs.sendMessage(tabId, { type: 'ping' }, { frameId });
+    return !!ping?.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Subframes get content.js only — no agent overlay or palette inside iframes. */
+async function sendToFrame(tabId, frameId, message) {
+  if (!(await pingFrame(tabId, frameId))) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        files: ['content.js'],
+      });
+    } catch (err) {
+      return { error: `Cannot inject into frame ${frameId}: ${err.message || err}` };
+    }
+    if (!(await pingFrame(tabId, frameId))) {
+      return { error: `Frame ${frameId} did not answer. Run frames to list current frames.` };
+    }
+  }
+  try {
+    const result = await chrome.tabs.sendMessage(
+      tabId,
+      { ...message, args: { ...(message.args || {}), frameId } },
+      { frameId }
+    );
+    return { frameId, ...(result || {}) };
+  } catch (err) {
+    return { error: err.message || `Frame ${frameId} message failed` };
+  }
+}
+
+/** Every subframe (same- or cross-origin) with its url and, optionally, its text. */
+async function listFrames(tabId, { textChars = 0 } = {}) {
+  let results = [];
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      args: [textChars],
+      func: (maxChars) => {
+        const text = (document.body && document.body.innerText) || '';
+        return {
+          url: location.href,
+          title: document.title,
+          textLength: text.length,
+          ...(maxChars ? { text: text.slice(0, maxChars) } : {}),
+        };
+      },
+    });
+  } catch {
+    return [];
+  }
+  return results
+    .filter((item) => item.frameId !== 0 && item.result)
+    .map((item) => ({ frameId: item.frameId, ...item.result }));
+}
+
 async function sendToTab(tabId, message) {
+  const frameId = frameIdFor(message.args);
+  if (frameId) return sendToFrame(tabId, frameId, message);
   const ok = await ensureContentScript(tabId, { agentUi: tabId === agentTabId });
   if (!ok) return { error: 'Cannot inject content script on this page (chrome:// or blocked)' };
   // Cursor overlay only on the dedicated agent tab — never the user's page.
   if (tabId === agentTabId) await enableAgentUi(tabId);
   try {
-    return await chrome.tabs.sendMessage(tabId, message);
+    return await chrome.tabs.sendMessage(tabId, message, TOP_FRAME);
   } catch (err) {
     // One retry after re-inject (common after x.com full navigations).
     try {
@@ -929,7 +1004,7 @@ async function sendToTab(tabId, message) {
     } catch {}
     try {
       await enableAgentUi(tabId);
-      return await chrome.tabs.sendMessage(tabId, message);
+      return await chrome.tabs.sendMessage(tabId, message, TOP_FRAME);
     } catch (err2) {
       return { error: err2.message || err.message || 'Content script message failed' };
     }
@@ -997,7 +1072,8 @@ async function clickViaCdpOrDom(tabId, args) {
     args,
   });
   if (prepared?.error) return prepared;
-  if (prepared?.x == null || prepared?.y == null) {
+  // prepareClick coordinates are relative to the subframe; CDP needs top-level ones.
+  if (prepared?.x == null || prepared?.y == null || frameIdFor(args)) {
     return sendToTab(tabId, { type: 'dom', command: 'click', args });
   }
   // debugger.attach + CDP mouse events activate the target tab and bring
@@ -1220,9 +1296,10 @@ async function handleCommand(command, args) {
         if (!tab?.id) return { error: 'No tab' };
         const text = args.text ?? '';
         let selector = args.selector || 'div[role=textbox]';
+        if (frameIdFor(args)) return { tabId, error: 'paste does not reach iframes. Use fill with the frame ref.' };
         await ensureContentScript(tabId);
         // The MAIN-world paste below only understands CSS; turn a snapshot ref into one.
-        if (/^@?e\d+$/.test(selector)) {
+        if (/^@?(f\d+)?e\d+$/.test(selector)) {
           const resolved = await sendToTab(tabId, { type: 'dom', command: 'resolve', args: { selector } });
           if (resolved?.error) return { tabId, ...resolved };
           selector = resolved.selector;
@@ -1347,7 +1424,24 @@ async function handleCommand(command, args) {
           command,
           args,
         });
+        // Top-frame reads point at iframes so their content is not silently missed.
+        if ((command === 'text' || command === 'snapshot') && !frameIdFor(args) && !result.error) {
+          const frames = await listFrames(tabId, { textChars: command === 'text' ? 4000 : 0 });
+          if (frames.length) {
+            result.frames = frames;
+            result.framesHint =
+              command === 'snapshot'
+                ? 'Elements inside iframes are not listed. Run snapshot with frameId to get their refs.'
+                : 'iframe text is listed per frame (first 4000 chars). Pass frameId for the full text.';
+          }
+        }
         return { tabId, ...result };
+      }
+
+      case 'frames': {
+        const tabId = await resolveWorkTabId(args);
+        if (!tabId) return { error: 'No tab' };
+        return { tabId, frames: await listFrames(tabId) };
       }
 
       case 'screenshot': {
@@ -1377,7 +1471,7 @@ async function handleCommand(command, args) {
         const tab = await getUserFacingTab();
         if (!tab?.id) return { cancelled: true };
         try {
-          await chrome.tabs.sendMessage(tab.id, { type: 'place-cancel' });
+          await chrome.tabs.sendMessage(tab.id, { type: 'place-cancel' }, TOP_FRAME);
         } catch {}
         await savePendingPlaces(tab.id, null);
         return { cancelled: true };
@@ -1606,7 +1700,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const tabId = places[0]?.tabId || msg.place?.tabId || (await getUserFacingTab())?.id;
       if (tabId) {
         try {
-          const snap = await chrome.tabs.sendMessage(tabId, { type: 'place-commit' });
+          const snap = await chrome.tabs.sendMessage(tabId, { type: 'place-commit' }, TOP_FRAME);
           if (snap?.places?.length) places = snap.places;
           if (snap?.layout) layout = snap.layout;
         } catch {}
