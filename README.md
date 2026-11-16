@@ -97,17 +97,23 @@ npm run cli -- snapshot
 | `status` | 连接状态、当前标签 |
 | `tabs` | 所有标签 |
 | `goto <url>` | 当前标签跳转 |
-| `snapshot` | 页面文本 + 可点元素 |
-| `click <selector>` | 点击 |
+| `snapshot` | 页面文本 + 可点元素，每个带编号 `e1` `e2`…（iframe 里是 `f3e1`） |
+| `click <selector>` | 点击（selector 也可以填 snapshot 编号） |
 | `fill <sel> <text>` | 填入输入框 |
 | `type <text>` | 向当前焦点输入 |
 | `press Enter` | 按键 |
 | `text` | 页面纯文本 |
 | `wait <selector>` | 等待元素 |
+| `screenshot` | 截图存成文件；`--selector` 截单个元素，`--full` 拼整页 |
+| `upload <sel> <file...>` | 往文件框或拖拽区上传本地文件 |
+| `frames` | 列出页面里的 iframe |
+| `console` / `network` | 页面日志、报错和请求（`--errors` / `--failed`） |
 | `last-pick` | 刚才点选的元素 |
 | `focus` | 把 agent 页签提到前台 |
 
-默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。
+默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe。
+
+Chrome 不绘制后台标签，所以截 agent 页签要加 `--foreground`（会切到前台）；你正在看的标签用 `--tab <id>` 可以直接截。
 
 ## HTTP API
 
