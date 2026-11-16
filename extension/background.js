@@ -1044,6 +1044,12 @@ async function handleCommand(command, args) {
         };
       }
 
+      case 'reload-extension': {
+        // Unpacked dev installs: pick up a new build without chrome://extensions.
+        setTimeout(() => chrome.runtime.reload(), 100);
+        return { ok: true, reloading: true, version: chrome.runtime.getManifest().version };
+      }
+
       case 'focus': {
         // Explicit focus only
         const tabId = args.tabId || agentTabId;

@@ -91,6 +91,7 @@ Commands:
   exists <selector>
   scroll [y]
   eval <expression>
+  reload-extension
   last-pick
   start-pick
   last-place
@@ -126,6 +127,7 @@ async function main() {
     case 'url':
     case 'title':
     case 'reload':
+    case 'reload-extension':
     case 'text':
       break;
     case 'snapshot':
