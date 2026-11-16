@@ -433,6 +433,159 @@ async function takeScreenshot(args = {}) {
   return result;
 }
 
+/**
+ * Runs in the page's MAIN world (serialized by executeScript — keep it
+ * self-contained). Records console output, uncaught errors and fetch/XHR
+ * results from now on.
+ */
+function installPageMonitor() {
+  const key = Symbol.for('forge-design.monitor');
+  if (window[key]) return { already: true };
+  const limit = 300;
+  const state = { installedAt: Date.now(), logs: [], requests: [] };
+  Object.defineProperty(window, key, { value: state });
+  const push = (list, entry) => {
+    list.push(entry);
+    if (list.length > limit) list.shift();
+  };
+  const format = (value) => {
+    if (value instanceof Error) {
+      const stack = (value.stack || '').split('\n').slice(1, 4).join('\n');
+      return `${value.name}: ${value.message}${stack ? `\n${stack}` : ''}`;
+    }
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+  const text = (values) => values.map(format).join(' ').slice(0, 2000);
+
+  for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+    const original = console[level];
+    console[level] = function (...values) {
+      push(state.logs, { level, text: text(values), at: Date.now() });
+      return original.apply(this, values);
+    };
+  }
+  window.addEventListener('error', (event) => {
+    const target = event.target;
+    if (target && target !== window) {
+      const url = target.currentSrc || target.src || target.href;
+      if (url) push(state.requests, { kind: target.tagName.toLowerCase(), url, error: 'failed to load', at: Date.now() });
+      return;
+    }
+    push(state.logs, {
+      level: 'error',
+      kind: 'exception',
+      text: event.error ? format(event.error) : `${event.message} (${event.filename}:${event.lineno})`,
+      at: Date.now(),
+    });
+  }, true);
+  window.addEventListener('unhandledrejection', (event) => {
+    push(state.logs, { level: 'error', kind: 'unhandledrejection', text: format(event.reason), at: Date.now() });
+  });
+
+  const originalFetch = window.fetch;
+  window.fetch = async function (input, init) {
+    const at = Date.now();
+    const method = String(init?.method || input?.method || 'GET').toUpperCase();
+    const url = String(input?.url || input);
+    try {
+      const response = await originalFetch.apply(this, arguments);
+      push(state.requests, { kind: 'fetch', method, url: response.url || url, status: response.status, ms: Date.now() - at, at });
+      return response;
+    } catch (err) {
+      push(state.requests, { kind: 'fetch', method, url, error: String(err?.message || err), ms: Date.now() - at, at });
+      throw err;
+    }
+  };
+  const originalOpen = XMLHttpRequest.prototype.open;
+  const originalSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    this[key] = { method: String(method).toUpperCase(), url: String(url) };
+    return originalOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function () {
+    const info = this[key];
+    if (info) {
+      const at = Date.now();
+      this.addEventListener('loadend', () => {
+        push(state.requests, {
+          kind: 'xhr',
+          ...info,
+          url: this.responseURL || info.url,
+          status: this.status,
+          ...(this.status === 0 ? { error: 'network error or aborted' } : {}),
+          ms: Date.now() - at,
+          at,
+        });
+      });
+    }
+    return originalSend.apply(this, arguments);
+  };
+  return { already: false };
+}
+
+/** MAIN world reader for installPageMonitor plus Resource Timing since page load. */
+function readPageMonitor(kind, opts) {
+  const state = window[Symbol.for('forge-design.monitor')];
+  const iso = (ms) => new Date(ms).toISOString();
+  const out = { url: location.href, capturingSince: iso(state.installedAt) };
+  if (kind === 'console') {
+    const logs = opts.level ? state.logs.filter((log) => log.level === opts.level) : state.logs;
+    out.logs = logs.slice(-opts.limit).map((log) => ({ ...log, at: iso(log.at) }));
+    if (opts.clear) state.logs.length = 0;
+    return out;
+  }
+  const failed = (request) => request.error || request.status >= 400;
+  const requests = opts.failed ? state.requests.filter(failed) : state.requests;
+  out.requests = requests.slice(-opts.limit).map((request) => ({ ...request, at: iso(request.at) }));
+  // fetch/XHR after the monitor started are already in requests, with method and status.
+  const installedOffset = state.installedAt - performance.timeOrigin;
+  let resources = performance
+    .getEntriesByType('resource')
+    .filter(
+      (entry) =>
+        !(['fetch', 'xmlhttprequest'].includes(entry.initiatorType) && entry.startTime >= installedOffset)
+    )
+    .map((entry) => ({
+      kind: entry.initiatorType,
+      url: entry.name,
+      status: entry.responseStatus || null,
+      ms: Math.round(entry.duration),
+      bytes: entry.transferSize,
+      at: iso(performance.timeOrigin + entry.startTime),
+    }));
+  if (opts.failed) resources = resources.filter((entry) => entry.status >= 400);
+  out.resources = resources.slice(-opts.limit);
+  const navigation = performance.getEntriesByType('navigation')[0];
+  if (navigation) {
+    out.document = {
+      url: navigation.name,
+      status: navigation.responseStatus || null,
+      ms: Math.round(navigation.duration),
+    };
+  }
+  if (opts.clear) {
+    state.requests.length = 0;
+    performance.clearResourceTimings();
+  }
+  return out;
+}
+
+async function runInPage(tabId, frameId, func, args = []) {
+  const [injection] = await chrome.scripting.executeScript({
+    target: frameId ? { tabId, frameIds: [frameId] } : { tabId },
+    world: 'MAIN',
+    injectImmediately: true,
+    func,
+    args,
+  });
+  return injection?.result;
+}
+
 /** Refresh pick DOM metadata from the live page (html/styles may be stale). */
 async function enrichPick(pick) {
   if (!pick?.selector) return pick;
@@ -1443,6 +1596,31 @@ async function handleCommand(command, args) {
         return { tabId, ...result };
       }
 
+      case 'console':
+      case 'network': {
+        const tabId = await resolveWorkTabId(args);
+        if (!tabId) return { error: 'No tab' };
+        const frameId = frameIdFor(args);
+        const install = await runInPage(tabId, frameId, installPageMonitor);
+        const data = await runInPage(tabId, frameId, readPageMonitor, [
+          command,
+          {
+            clear: !!args.clear,
+            failed: !!args.failed,
+            level: args.level || null,
+            limit: Number(args.limit) || 100,
+          },
+        ]);
+        return {
+          tabId,
+          ...(frameId ? { frameId } : {}),
+          ...data,
+          ...(install?.already
+            ? {}
+            : { note: 'Capture started just now. Run reload to record the page load as well.' }),
+        };
+      }
+
       case 'frames': {
         const tabId = await resolveWorkTabId(args);
         if (!tabId) return { error: 'No tab' };
@@ -1753,6 +1931,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 }
+
+// Start console/network capture as soon as the agent tab commits a new page.
+chrome.webNavigation?.onCommitted.addListener((details) => {
+  if (details.tabId !== agentTabId || details.frameId !== 0) return;
+  if (isRestrictedUrl(details.url)) return;
+  runInPage(details.tabId, 0, installPageMonitor).catch(() => {});
+});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   savePendingPlaces(tabId, null).catch(() => {});

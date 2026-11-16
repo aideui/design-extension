@@ -102,6 +102,19 @@ function readUploadFiles(paths) {
   });
 }
 
+function parseMonitorArgs(rest) {
+  const args = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const flag = rest[i];
+    if (flag === '--clear') args.clear = true;
+    else if (flag === '--failed') args.failed = true;
+    else if (flag === '--errors') args.level = 'error';
+    else if (flag === '--limit') args.limit = Number(rest[++i]);
+    else throw new Error(`unknown flag: ${flag}`);
+  }
+  return args;
+}
+
 function parseScreenshotArgs(rest) {
   const args = {};
   for (let i = 0; i < rest.length; i += 1) {
@@ -141,6 +154,8 @@ Commands:
   eval <expression>
   reload-extension
   frames
+  console [--errors] [--clear] [--limit n]
+  network [--failed] [--clear] [--limit n]
   screenshot [--full] [--selector <css|ref>] [--out <file>] [--jpeg] [--foreground]
   last-pick
   start-pick
@@ -235,6 +250,10 @@ async function main() {
       break;
     case 'screenshot':
       args = parseScreenshotArgs(rest);
+      break;
+    case 'console':
+    case 'network':
+      args = parseMonitorArgs(rest);
       break;
     case 'last-pick':
     case 'lastPick':
