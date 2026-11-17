@@ -216,6 +216,14 @@ function bridgeHint() {
   return `读取或操作用户的 Chrome 页面用本机桥：node ${CLI_PATH} <命令>。常用：snapshot（元素带编号）、click e3、fill e3 文字、screenshot --tab <标签 id>、console --errors、network --failed。完整说明见 ${SKILL_PATH}。发送、发布、付款、删除前先问用户。`;
 }
 
+/** Side-panel conversation → bridge agent key, so each chat drives its own tab. */
+const panelAgents = new Map();
+
+function panelAgentFor(session) {
+  if (session?.id && panelAgents.has(session.id)) return panelAgents.get(session.id);
+  return `panel-${(session?.id || crypto.randomUUID()).slice(0, 8)}`;
+}
+
 function unavailableMessage() {
   const reasons = providerStatuses()
     .filter((item) => !item.ready)
@@ -263,6 +271,7 @@ async function handleTurn(req, res, { session, owner } = {}) {
   }
 
   const candidates = owner ? [owner] : candidatesFor(payload.provider);
+  const agent = panelAgentFor(session);
   if (!candidates.length) return json(res, 503, { error: unavailableMessage() });
 
   const stream = payload.stream === true || String(req.headers.accept || '').includes('text/event-stream');
@@ -330,6 +339,7 @@ async function handleTurn(req, res, { session, owner } = {}) {
           rules: provider.id === 'grok' ? context : [context, bridgeHint()].filter(Boolean).join('\n'),
           sessionId: session?.id,
           cwd,
+          env: { FORGE_DESIGN_AGENT: agent },
           screenshotPath,
           timeoutMs: payload.timeoutMs,
           onEvent: (event) => {
@@ -346,6 +356,7 @@ async function handleTurn(req, res, { session, owner } = {}) {
         const result = await run.done;
         if (streamError && !result.text && !result.stopped) throw new Error(streamError);
         const sessionId = result.sessionId || session?.id || null;
+        if (sessionId) panelAgents.set(sessionId, agent);
         return finish({
           type: 'end',
           sessionId,

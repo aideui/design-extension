@@ -164,7 +164,8 @@ Commands:
   start-place
   raw <json>
 
-Any command takes --tab <id> (an open tab) and --frame <id> (an iframe from frames).
+Any command takes --tab <id> (an open tab), --frame <id> (an iframe from frames)
+and --agent <name> (its own background tab; also FORGE_DESIGN_AGENT).
 Snapshot refs (e12, f3e12) work wherever a selector does.
 
 Examples:
@@ -187,12 +188,14 @@ async function main() {
     return;
   }
 
-  // --tab / --frame work on any command: target a specific tab or iframe.
+  // --tab / --frame / --agent work on any command. --agent (or FORGE_DESIGN_AGENT)
+  // gives this caller its own background tab, so parallel agents do not collide.
   const target = {};
-  for (const flag of ['--tab', '--frame']) {
+  if (process.env.FORGE_DESIGN_AGENT) target.agent = process.env.FORGE_DESIGN_AGENT;
+  for (const [flag, key] of [['--tab', 'tabId'], ['--frame', 'frameId'], ['--agent', 'agent']]) {
     const at = rest.indexOf(flag);
     if (at === -1) continue;
-    target[flag === '--tab' ? 'tabId' : 'frameId'] = Number(rest[at + 1]);
+    target[key] = key === 'agent' ? rest[at + 1] : Number(rest[at + 1]);
     rest.splice(at, 2);
   }
 

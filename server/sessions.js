@@ -506,10 +506,10 @@ export function toActivityEvent(event) {
   return activity;
 }
 
-export function startGrokStream({ prompt, rules, sessionId, cwd, timeoutMs = 600000, onEvent }) {
+export function startGrokStream({ prompt, rules, sessionId, cwd, env, timeoutMs = 600000, onEvent }) {
   const child = spawn(resolveGrokBin(), grokArgs({ prompt, rules, sessionId, cwd, stream: true }), {
     cwd: cwd || os.homedir(),
-    env: process.env,
+    env: { ...process.env, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let buffer = '';

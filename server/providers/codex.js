@@ -90,7 +90,7 @@ export function mapExecEvent(event, state) {
   return out;
 }
 
-export function start({ prompt, rules, sessionId, cwd, screenshotPath, timeoutMs = 600000, onEvent }) {
+export function start({ prompt, rules, sessionId, cwd, env, screenshotPath, timeoutMs = 600000, onEvent }) {
   const file = bin();
   if (!file) throw new Error('Codex is not installed');
   // Codex has no system-prompt flag; the page context leads the prompt and is stripped on read.
@@ -113,6 +113,7 @@ export function start({ prompt, rules, sessionId, cwd, screenshotPath, timeoutMs
     bin: file,
     args,
     cwd,
+    env,
     timeoutMs,
     label: 'codex',
     onLine: (event) => {

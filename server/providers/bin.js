@@ -112,10 +112,10 @@ export function runInTerminal({ cwd, argv }) {
  * Spawn a CLI that prints one JSON object per line. `onLine` gets each parsed
  * object; `done` resolves with whatever `finish` returns on exit 0.
  */
-export function spawnJsonLines({ bin, args, cwd, timeoutMs, onLine, finish, label }) {
+export function spawnJsonLines({ bin, args, cwd, env, timeoutMs, onLine, finish, label }) {
   const child = spawn(bin, args, {
     cwd: cwd || os.homedir(),
-    env: spawnEnv(bin),
+    env: { ...spawnEnv(bin), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let buffer = '';
