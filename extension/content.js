@@ -2651,11 +2651,52 @@ function watchForTakeover(on) {
   }
 }
 
+let captureScroller = null;
+
+/**
+ * App shells often pin the page to the viewport and scroll a main panel
+ * instead. Pick the largest visible element that actually scrolls.
+ */
+function findScrollContainer() {
+  const root = document.scrollingElement || document.documentElement;
+  if (root.scrollHeight > window.innerHeight + 4) return null;
+  let best = null;
+  let bestArea = 0;
+  for (const el of document.body.querySelectorAll('*')) {
+    if (el.scrollHeight <= el.clientHeight + 40) continue;
+    const overflow = getComputedStyle(el).overflowY;
+    if (overflow !== 'auto' && overflow !== 'scroll' && overflow !== 'overlay') continue;
+    const area = el.clientWidth * el.clientHeight;
+    if (area > bestArea && isVisible(el)) {
+      best = el;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
+function scrollerInfo(el) {
+  const box = el.getBoundingClientRect();
+  return {
+    rect: { x: box.x + el.clientLeft, y: box.y + el.clientTop, w: el.clientWidth, h: el.clientHeight },
+    scrollTop: el.scrollTop,
+    scrollHeight: el.scrollHeight,
+    clientHeight: el.clientHeight,
+  };
+}
+
 /** Geometry for background screenshots. Kept off handleDomCommand so the agent cursor stays hidden. */
-async function measureForCapture({ selector, scrollTo, hideFixed }) {
+async function measureForCapture({ selector, scrollTo, hideFixed, detectScroller, scroller }) {
   if (hideFixed != null) setFixedHidden(hideFixed);
+  if (detectScroller) {
+    const el = findScrollContainer();
+    captureScroller = el ? new WeakRef(el) : null;
+  }
+  const scrollEl = scroller ? captureScroller?.deref() : null;
+  if (scroller && !scrollEl) return { error: 'The scrolling panel went away during the capture.' };
   if (scrollTo != null) {
-    window.scrollTo({ top: Number(scrollTo), left: 0, behavior: 'instant' });
+    if (scrollEl) scrollEl.scrollTo({ top: Number(scrollTo), left: scrollEl.scrollLeft, behavior: 'instant' });
+    else window.scrollTo({ top: Number(scrollTo), left: 0, behavior: 'instant' });
     await nextFrames(2, 120);
   }
   let rect = null;
@@ -2668,11 +2709,13 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
     rect = { x: box.x, y: box.y, w: box.width, h: box.height };
   }
   const root = document.scrollingElement || document.documentElement;
+  const active = scrollEl || captureScroller?.deref();
   return {
     rect,
     viewport: { w: window.innerWidth, h: window.innerHeight },
     scrollY: window.scrollY,
     scrollHeight: root.scrollHeight,
+    scroller: (scroller || detectScroller) && active ? scrollerInfo(active) : null,
   };
 }
 
