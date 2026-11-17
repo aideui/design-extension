@@ -2481,6 +2481,36 @@ async function handleDomCommand(command, args) {
       return { ok: true };
     }
 
+    case 'upload': {
+      const target = queryOne(args.selector);
+      if (!target) return notFound(args.selector);
+      const files = (args.files || []).map(
+        (file) => new File([base64ToBytes(file.data)], file.name, { type: file.type || '' })
+      );
+      if (!files.length) return { error: 'files required' };
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      const summary = files.map((file) => ({ name: file.name, size: file.size, type: file.type }));
+      await pointAtElement(target, '上传');
+      const input = fileInputFor(target);
+      if (input) {
+        if (!input.multiple && files.length > 1) {
+          return { error: 'This file input takes one file. Pass a single file.' };
+        }
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        return { ok: true, via: 'input', selector: args.selector, files: summary };
+      }
+      // No file input nearby: treat the target as a drop zone.
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        target.dispatchEvent(
+          new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer })
+        );
+      }
+      return { ok: true, via: 'drop', selector: args.selector, files: summary };
+    }
+
     case 'resolve': {
       const el = queryOne(args.selector);
       if (!el) return notFound(args.selector);
@@ -2540,6 +2570,31 @@ async function handleDomCommand(command, args) {
   }
 }
 
+function base64ToBytes(data) {
+  const binary = atob(data || '');
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** The file input behind an upload button, label or wrapper (inputs are usually hidden). */
+function fileInputFor(el) {
+  const isFileInput = (node) => node?.tagName === 'INPUT' && node.type === 'file';
+  if (isFileInput(el)) return el;
+  if (el.tagName === 'LABEL' && isFileInput(el.control)) return el.control;
+  const inside = el.querySelectorAll('input[type="file"]');
+  if (inside.length) return inside.length === 1 ? inside[0] : null;
+  // An upload button often sits next to its hidden input; a drop zone does not get this lookup.
+  if (!el.matches('button, a, label, [role="button"]')) return null;
+  let scope = el.parentElement;
+  for (let depth = 0; scope && depth < 3; depth += 1) {
+    const inputs = scope.querySelectorAll('input[type="file"]');
+    if (inputs.length) return inputs.length === 1 ? inputs[0] : null;
+    scope = scope.parentElement;
+  }
+  return null;
+}
+
 let hiddenForCapture = [];
 
 /** Full-page stitching: fixed and sticky bars would repeat on every screen. */
@@ -2589,7 +2644,7 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
   };
 }
 
-window.__gcbContentVersion = '0.3.43';
+window.__gcbContentVersion = '0.3.44';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'ping') {
