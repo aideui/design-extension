@@ -1,7 +1,7 @@
 # Forge Design
 
 <p align="center">
-  <img src="assets/social-preview.jpg" alt="Forge Design：在真实页面上点选组件，让本机 AI 改界面" width="100%" />
+  <img src="assets/social-preview.jpg" alt="Forge Design：让 AI 编程助手用上你的 Chrome。右侧是插件选中 Forge Starter 账号页的「新建账号」按钮" width="100%" />
 </p>
 
 **让本机的 AI 编程助手用上你自己的 Chrome：点选组件改界面，也能读页面、点按钮、截图、看报错。**
