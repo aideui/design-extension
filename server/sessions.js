@@ -107,6 +107,14 @@ export function resolveDirectory(raw) {
   };
 }
 
+function isDirectory(dir) {
+  try {
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function listDirectories(sessions = listSessions({ limit: 500 })) {
   const map = new Map();
   for (const session of sessions) {
@@ -114,6 +122,8 @@ export function listDirectories(sessions = listSessions({ limit: 500 })) {
     const key = normalizeCwd(session.cwd);
     const current = map.get(key);
     if (!current) {
+      // Temp worktrees and deleted projects would only fail on send.
+      if (!isDirectory(key)) continue;
       map.set(key, {
         path: key,
         name: path.basename(key) || key,

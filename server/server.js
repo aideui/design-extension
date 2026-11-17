@@ -238,6 +238,10 @@ async function handleTurn(req, res, { session, owner } = {}) {
   const text = String(payload.text || payload.prompt || '').trim();
   if (!text) return json(res, 400, { error: 'text required' });
   const cwd = payload.cwd || session?.cwd || os.homedir();
+  // spawn reports a missing cwd as ENOENT on the binary, which reads like a broken install.
+  if (!resolveDirectory(cwd).exists) {
+    return json(res, 400, { error: `工作目录不存在：${cwd}。点右上角 ··· 换一个目录。` });
+  }
   const screenshotPath = writeScreenshotFile(payload.screenshot);
   const places = Array.isArray(payload.places) ? payload.places : payload.place?.places;
   const context = buildGrokContext({
