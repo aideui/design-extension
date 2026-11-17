@@ -696,6 +696,63 @@ function readPageMonitor(kind, opts) {
   return out;
 }
 
+function remoteValue(remote) {
+  if (!remote || remote.type === 'undefined') return null;
+  if ('value' in remote) return remote.value;
+  return remote.description ?? remote.type;
+}
+
+/**
+ * Run arbitrary JS in the page's main world through the debugger, so the
+ * page's CSP (no unsafe-eval) cannot block it. Top-level await works.
+ */
+async function evaluateInPage(tabId, code) {
+  const target = { tabId };
+  let attachedHere = false;
+  try {
+    await chrome.debugger.attach(target, '1.3');
+    attachedHere = true;
+  } catch (err) {
+    if (!/already attached/i.test(String(err?.message || err))) {
+      return { error: `Cannot evaluate here: ${err?.message || err}` };
+    }
+  }
+  try {
+    const res = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+      expression: code,
+      replMode: true,
+      awaitPromise: true,
+      returnByValue: true,
+      userGesture: true,
+    });
+    if (res.exceptionDetails) {
+      const detail = res.exceptionDetails;
+      return { error: detail.exception?.description || detail.text || 'Uncaught exception' };
+    }
+    return { value: remoteValue(res.result) };
+  } finally {
+    if (attachedHere) await chrome.debugger.detach(target).catch(() => {});
+  }
+}
+
+/** Subframes: main-world eval via executeScript; a frame whose CSP forbids eval says so. */
+async function evaluateInFrame(tabId, frameId, code) {
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    world: 'MAIN',
+    args: [code],
+    func: async (source) => {
+      try {
+        const value = await (0, eval)(source);
+        return { value: value === undefined ? null : JSON.parse(JSON.stringify(value)) };
+      } catch (err) {
+        return { error: String(err?.message || err) };
+      }
+    },
+  });
+  return injection?.result || { error: 'No result from frame' };
+}
+
 async function runInPage(tabId, frameId, func, args = []) {
   const [injection] = await chrome.scripting.executeScript({
     target: frameId ? { tabId, frameIds: [frameId] } : { tabId },
@@ -1751,7 +1808,6 @@ async function runBridgeCommand(command, args) {
       case 'scroll':
       case 'wait':
       case 'exists':
-      case 'eval':
       case 'select':
       case 'upload':
       case 'resolve':
@@ -1804,6 +1860,16 @@ async function runBridgeCommand(command, args) {
             ? {}
             : { note: 'Capture started just now. Run reload to record the page load as well.' }),
         };
+      }
+
+      case 'eval': {
+        const tabId = await resolveWorkTabId(args);
+        if (!tabId) return { error: 'No tab' };
+        const code = String(args.expression ?? args.code ?? '');
+        if (!code.trim()) return { error: 'expression required' };
+        const frameId = frameIdFor(args);
+        const result = frameId ? await evaluateInFrame(tabId, frameId, code) : await evaluateInPage(tabId, code);
+        return { tabId, ...(frameId ? { frameId } : {}), ...result };
       }
 
       case 'frames': {

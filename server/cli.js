@@ -152,7 +152,7 @@ Commands:
   wait <selector>
   exists <selector>
   scroll [y]
-  eval <expression>
+  eval <js...> | eval --file <script.js>
   reload-extension
   frames
   console [--errors] [--clear] [--limit n]
@@ -253,7 +253,10 @@ async function main() {
       args = { y: Number(rest[0] || 600) };
       break;
     case 'eval':
-      args = { expression: rest.join(' ') };
+      // eval --file script.js for anything longer than a one-liner.
+      args = {
+        expression: rest[0] === '--file' ? fs.readFileSync(rest[1], 'utf8') : rest.join(' '),
+      };
       break;
     case 'screenshot':
       args = parseScreenshotArgs(rest);

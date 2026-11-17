@@ -288,6 +288,23 @@ await test('strict CSP page', async () => {
   assert(cli('network', '--failed').requests.some((r) => r.url.endsWith('/csp-missing')), 'csp network');
 });
 
+await test('eval: any code, even on a strict-CSP page', async () => {
+  cli('goto', `${BASE}/csp.html`);
+  assert(cli('eval', 'document.title').value === 'CSP', 'title');
+  const fetched = cli('eval', "const r = await fetch('/csp.js'); r.status");
+  assert(fetched.value === 200, 'await + fetch', fetched);
+  assert(/boom/.test(cli('eval', "throw new Error('boom')").error || ''), 'exception text');
+  fs.writeFileSync(path.join(TMP, 'script.js'), 'const n = 2;\nn * 21');
+  assert(cli('eval', '--file', path.join(TMP, 'script.js')).value === 42, 'eval --file');
+});
+
+await test('eval in a cross-origin iframe', async () => {
+  cli('goto', `${BASE}/`);
+  const cross = cli('frames').frames.find((f) => f.url.includes('localhost:8782'));
+  const res = cli('eval', 'location.host', '--frame', cross.frameId);
+  assert(res.value === 'localhost:8782', 'frame eval', res);
+});
+
 await test('big page snapshot speed', async () => {
   cli('goto', `${BASE}/big.html`);
   const snap = cli('snapshot', 80);

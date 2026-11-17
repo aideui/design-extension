@@ -22,7 +22,7 @@ press <key>
 wait <selector>
 exists <selector>
 scroll [y]
-eval <expression>
+eval <js...> | eval --file <script.js>
 screenshot [--full] [--selector <css|ref>] [--out <file>] [--jpeg] [--foreground]
 upload <selector> <file...>
 frames
@@ -96,4 +96,4 @@ Use the active user tab only when the user asked you to take over their current 
 scripts/bridge.sh raw '{"command":"snapshot","args":{"useActive":true,"limit":80}}'
 ```
 
-Do not use `eval` to click, fill, navigate, fetch, open sockets, or access secrets.
+`eval` runs any JavaScript in the page's main world (top-level `await` works; page CSP does not block it) and returns the last value. Prefer `click` / `fill` for interaction so the user sees the cursor.
