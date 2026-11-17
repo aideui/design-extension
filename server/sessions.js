@@ -36,7 +36,7 @@ function flattenContent(content) {
 }
 
 const INJECTED_CONTEXT_RE =
-  /用户当前正在看这个 Chrome 页面：|用户选中了这个元素|用户要把一个 Forge 组件|用户要把多个 Forge 组件|用户框选了页面区域|element crop \(optional visual\):|annotated screenshot:|截图是选中元素附近的小图|按红框、箭头、笔迹和文字/;
+  /用户当前正在看这个 Chrome 页面：|读取或操作用户的 Chrome 页面用本机桥|用户选中了这个元素|用户要把一个 Forge 组件|用户要把多个 Forge 组件|用户框选了页面区域|element crop \(optional visual\):|annotated screenshot:|截图是选中元素附近的小图|按红框、箭头、笔迹和文字/;
 const CROP_HINT = '截图是选中元素附近的小图，不是整页。';
 const ANNOTATE_HINT = '按红框、箭头、笔迹和文字理解要改的位置。';
 const CONTINUATION_RE = /^This session is being continued from a previous conversation/i;
@@ -107,8 +107,7 @@ export function resolveDirectory(raw) {
   };
 }
 
-export function listDirectories() {
-  const sessions = listSessions({ limit: 500 });
+export function listDirectories(sessions = listSessions({ limit: 500 })) {
   const map = new Map();
   for (const session of sessions) {
     if (!session.cwd) continue;
@@ -396,14 +395,6 @@ export function readSession(sessionId, { messageLimit = 80 } = {}) {
   };
 }
 
-function shellSingleQuote(value) {
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
-
-function osascriptQuote(value) {
-  return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
-
 function grokArgs({ prompt, rules, sessionId, cwd, stream }) {
   const args = ['-p', prompt, '--always-approve'];
   args.push('--output-format', stream ? 'streaming-json' : 'json');
@@ -489,43 +480,6 @@ export function toActivityEvent(event) {
   if (verb && verb !== 'other') activity.verb = verb;
   if (label) activity.label = label;
   return activity;
-}
-
-export function runGrok({ prompt, rules, sessionId, cwd, timeoutMs = 600000 }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(resolveGrokBin(), grokArgs({ prompt, rules, sessionId, cwd, stream: false }), {
-      cwd: cwd || os.homedir(),
-      env: process.env,
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGTERM');
-      reject(new Error('grok timed out'));
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error((stderr || stdout || `grok exited ${code}`).slice(-800)));
-        return;
-      }
-      try {
-        resolve(JSON.parse(stdout));
-      } catch {
-        resolve({ text: stdout.trim(), sessionId: sessionId || null });
-      }
-    });
-  });
 }
 
 export function startGrokStream({ prompt, rules, sessionId, cwd, timeoutMs = 600000, onEvent }) {
@@ -780,22 +734,4 @@ export function buildGrokPrompt({ text, page, screenshotPath, screenshotKind, sc
   const context = buildGrokContext({ page, screenshotPath, screenshotKind, screenshotNotes, pick, place, places });
   if (!context) return text;
   return `${context}\n\n${text}`;
-}
-
-export function openSessionInTerminal({ sessionId, cwd }) {
-  if (!sessionId) return Promise.reject(new Error('sessionId required'));
-  const workdir = cwd || os.homedir();
-  const script = `cd ${shellSingleQuote(workdir)} && exec ${shellSingleQuote(resolveGrokBin())} --resume ${shellSingleQuote(sessionId)}`;
-  return new Promise((resolve, reject) => {
-    const child = spawn('osascript', ['-e', `tell application "Terminal" to do script ${osascriptQuote(script)}`]);
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk;
-    });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code !== 0) reject(new Error(stderr || `osascript exited ${code}`));
-      else resolve({ ok: true, sessionId, cwd: workdir });
-    });
-  });
 }

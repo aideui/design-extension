@@ -23,6 +23,7 @@ const moreMenu = document.getElementById('moreMenu');
 const bridgeSwitch = document.getElementById('bridgeSwitch');
 const bridgeState = document.getElementById('bridgeState');
 const dirList = document.getElementById('dirList');
+const providerList = document.getElementById('providerList');
 const dirNow = document.getElementById('dirNow');
 const dirForm = document.getElementById('dirForm');
 const dirInput = document.getElementById('dirInput');
@@ -399,6 +400,9 @@ let token = '';
 let sessions = [];
 let directories = [];
 let currentCwd = '';
+/** 'auto' or a provider id from GET /providers. */
+let providerPref = 'auto';
+let providers = [];
 let current = { id: null, cwd: null, title: '新对话', messages: [] };
 let includePick = false;
 let lastPick = null;
@@ -645,21 +649,30 @@ function formatMessageTime(iso) {
   });
 }
 
-function stampAssistantMeta(messages, startedAt, summary) {
+function stampAssistantMeta(messages, startedAt, summary, answeredBy) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index].role === 'assistant' && !messages[index].pending) {
       messages[index].workedMs = Date.now() - startedAt;
       messages[index].at = new Date().toISOString();
       if (summary) messages[index].workSummary = summary;
+      if (answeredBy?.label) messages[index].answeredBy = answeredBy;
       return;
     }
   }
+}
+
+function answeredByText(answeredBy) {
+  if (!answeredBy?.label) return '';
+  if (answeredBy.fallbackFrom) return `${answeredBy.fallbackFrom} 不可用，改用 ${answeredBy.label}`;
+  return answeredBy.label;
 }
 
 function workLine(msg) {
   const parts = [];
   if (msg.workedMs != null) parts.push(formatWorkedFor(msg.workedMs));
   if (msg.workSummary) parts.push(msg.workSummary);
+  const who = answeredByText(msg.answeredBy);
+  if (who) parts.push(who);
   return parts.join(' · ');
 }
 
@@ -1382,7 +1395,8 @@ function renderSessionList() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'session-row';
-    btn.innerHTML = `<span class="t">${escapeHtml(session.title)}</span><span class="row-meta"><span class="when">${escapeHtml(
+    const who = session.providerLabel ? `<span class="who">${escapeHtml(session.providerLabel)}</span>` : '';
+    btn.innerHTML = `<span class="t">${escapeHtml(session.title)}</span><span class="row-meta">${who}<span class="when">${escapeHtml(
       formatRelativeTime(session.updatedAt)
     )}</span><span class="row-actions"><button class="row-open" type="button" title="在终端打开"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="M2 12c0-4.714 0-7.071 1.464-8.536C4.93 2 7.286 2 12 2c4.714 0 7.071 0 8.535 1.464C22 4.93 22 7.286 22 12c0 4.714 0 7.071-1.465 8.535C19.072 22 16.714 22 12 22s-7.071 0-8.536-1.465C2 19.072 2 16.714 2 12Z" stroke="currentColor" stroke-width="1.5"></path><path d="M17 15h-5M7 10l.234.195c1.282 1.068 1.923 1.602 1.923 2.305 0 .703-.64 1.237-1.923 2.305L7 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg></button><button class="row-delete" type="button" title="删除会话"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="M9.17 4a3.001 3.001 0 0 1 5.66 0M20.5 6h-17M18.833 8.5l-.46 6.9c-.177 2.654-.265 3.981-1.13 4.79-.865.81-2.196.81-4.856.81h-.774c-2.66 0-3.991 0-4.856-.81-.865-.809-.954-2.136-1.13-4.79l-.46-6.9M9.5 11l.5 5M14.5 11l-.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg></button></span></span>`;
     btn.addEventListener('click', () => {
@@ -1420,6 +1434,41 @@ function renderDirectories() {
   }
 }
 
+function providerNote(item) {
+  if (item.id === 'auto') {
+    const first = providers.find((provider) => provider.ready);
+    return first ? `现在用 ${first.label}，失败时换下一个` : '本机没有可用的 AI';
+  }
+  return item.ready ? '可用' : item.reason || '不可用';
+}
+
+function renderProviders() {
+  providerList.innerHTML = '';
+  const items = [{ id: 'auto', label: '自动', ready: true }, ...providers];
+  for (const item of items) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `dir-item provider-item${item.id === providerPref ? ' active' : ''}`;
+    // An unready provider stays selectable only if it is already the saved choice.
+    btn.disabled = !item.ready && item.id !== providerPref;
+    btn.innerHTML = `<span class="n">${escapeHtml(item.label)}</span><span class="p">${escapeHtml(
+      providerNote(item)
+    )}</span>`;
+    btn.addEventListener('click', async () => {
+      providerPref = item.id;
+      await chrome.storage.local.set({ provider: providerPref });
+      renderProviders();
+    });
+    providerList.appendChild(btn);
+  }
+}
+
+async function refreshProviders() {
+  const data = await api('/providers');
+  providers = data.providers || [];
+  renderProviders();
+}
+
 function resizeInput() {
   input.style.height = 'auto';
   input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
@@ -1430,7 +1479,8 @@ function resizeInput() {
 }
 
 async function loadConfig() {
-  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd']);
+  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd', 'provider']);
+  providerPref = data.provider || 'auto';
   port = data.port || 3847;
   token = data.token || '';
   currentCwd = data.currentCwd || '';
@@ -1751,6 +1801,7 @@ async function sendMessage(text, options = {}) {
         place: options.place || null,
         places: options.places || null,
         layout: options.layout || null,
+        provider: providerPref,
         stream: true,
       }),
       signal: abort.signal,
@@ -1772,14 +1823,20 @@ async function sendMessage(text, options = {}) {
         else if (event.text != null) streamed = event.text;
         updateStreamingText(streamed);
       }
+      if (event.type === 'provider') {
+        pushTrail(`${event.fallbackFrom} 不可用，改用 ${event.label}`);
+        patchActivityDom();
+        return;
+      }
       if (event.type === 'end') result = event;
-      if (event.type === 'error') throw new Error(event.message || 'grok error');
+      if (event.type === 'error') throw new Error(event.message || '本机 AI 出错');
     });
     flushStreamingPaint();
     if (generation !== sendGeneration) return;
     const summary = snapshotActivitySummary();
+    const answeredBy = { label: result.providerLabel, fallbackFrom: result.fallbackFrom };
     if (result.session) {
-      stampAssistantMeta(result.session.messages, startedAt, summary);
+      stampAssistantMeta(result.session.messages, startedAt, summary, answeredBy);
       applySession(result.session, { stick: true });
     } else {
       current.messages = current.messages.filter((msg) => !msg.pending);
@@ -1787,7 +1844,7 @@ async function sendMessage(text, options = {}) {
         role: 'assistant',
         text: result.text || streamed || (result.stopped ? '已停止' : '(空回复)'),
       });
-      stampAssistantMeta(current.messages, startedAt, summary);
+      stampAssistantMeta(current.messages, startedAt, summary, answeredBy);
       current.id = result.sessionId || current.id;
     }
     // Final markdown now; session list refresh must not block the reply paint
@@ -1973,9 +2030,10 @@ moreBtn.addEventListener('click', async (event) => {
   moreMenu.hidden = !opening;
   if (!opening) return;
   syncMoreMenu();
+  renderProviders();
   refreshBridgeSwitch();
   try {
-    await refreshDirectories();
+    await Promise.all([refreshDirectories(), refreshProviders()]);
     syncMoreMenu();
   } catch {}
 });
@@ -2229,6 +2287,7 @@ async function connectApp() {
   try {
     await refreshDirectories();
     await refreshSessions();
+    await refreshProviders();
   } catch {}
   if (currentCwd && !current.cwd) current.cwd = currentCwd;
   resizeInput();

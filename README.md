@@ -4,11 +4,11 @@
   <img src="assets/social-preview.jpg" alt="Forge Design：在真实页面上点选组件，用本地 Grok 改界面" width="100%" />
 </p>
 
-**在真实网页上点选组件，用你本地的 Grok 改界面。**
+**在真实网页上点选组件，用你本地的 AI（Grok、Claude Code 或 Codex）改界面。**
 
-Pick a component in real Chrome. Local Grok edits it.
+Pick a component in real Chrome. Your local Grok, Claude Code or Codex edits it.
 
-Forge Design 是 [Forge UI](https://forgeui.org) 的设计工具：Chrome 插件 + 本机桥接。你打开自己的应用，点一下要改的地方，侧边栏里的 Grok 带着 selector 改文案、样式、交互，或把 Forge 组件写入源码。页面内容留在本机，不经过云端。
+Forge Design 是 [Forge UI](https://forgeui.org) 的设计工具：Chrome 插件 + 本机桥接。你打开自己的应用，点一下要改的地方，侧边栏里的本机 AI 带着 selector 改文案、样式、交互，或把 Forge 组件写入源码。页面内容留在本机，不经过云端。
 
 [Forge UI](https://github.com/forge-ui/forge) · [Forge Starter](https://github.com/forge-ui/forge-starter) · [License: MIT](LICENSE)
 
@@ -16,16 +16,16 @@ Forge Design 是 [Forge UI](https://forgeui.org) 的设计工具：Chrome 插件
 
 常见 AI 改 UI 的方式是截图、猜 class、或者把整页丢给云端 agent。Forge Design 走另一条路：
 
-- **点的就是要改的。** 「选择元素」后，Grok 拿到真实 selector，而不是再猜一遍 DOM。也可以展开用「截图标注」。
+- **点的就是要改的。** 「选择元素」后，AI 拿到真实 selector，而不是再猜一遍 DOM。也可以展开用「截图标注」。
 - **组件可以放到页面上。** 从侧边栏组件盘拖到锚点旁边，确认「写入源码」后写入你的项目，不是只改一遍 live DOM。
 - **数据不出本机。** 桥接只听 `127.0.0.1`。截图、点选、页面文本都留在你这台机器上。
 - **不抢你正在看的标签。** 默认静默模式：跳转、点击、填表在专用 agent 页签后台跑。
 
-适合在真实 Chrome 里调试 Forge / Next 应用的人，也适合已经在用本地 Grok 的前端。
+适合在真实 Chrome 里调试 Forge / Next 应用的人，也适合已经在用本地 Grok、Claude Code 或 Codex 的前端。
 
 ## 60 秒上手
 
-插件只是界面。对话和改页面需要本机桥接（连你本地的 Grok）。需要已安装 Node.js 和 [Grok CLI](https://grok.x.ai)。
+插件只是界面。对话和改页面需要本机桥接（连你本地的 AI）。需要已安装 Node.js，以及 [Grok CLI](https://grok.x.ai)、[Claude Code](https://claude.com/claude-code) 或 [Codex](https://github.com/openai/codex) 中至少一个并已登录。
 
 **1. 启动本机桥接**
 
@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/mai
 3. 说话，例如：「把这个按钮改成主色，文案改成保存」
 4. 或者点 **+** 从组件盘放置 Forge 组件，确认后再「写入源码」
 
-侧边栏和终端里的 Grok 共用 `~/.grok/sessions`。标题栏可拉取本机会话，点 ··· 能在 Terminal 打开当前对话。
+点 ··· 的「对话 AI」选用哪个：默认「自动」，按 Grok、Claude Code、Codex 的顺序用第一个能用的，某个 AI 还没回复就出错时自动换下一个；已有的对话固定由原来的 AI 接着答。侧边栏和终端共用各家的本机会话（`~/.grok/sessions`、`~/.claude/projects`、`~/.codex/sessions`），标题栏可拉取，会话旁的按钮能在 Terminal 里接着聊。
 
 ## 工作流
 
@@ -65,12 +65,12 @@ curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/mai
 flowchart LR
   You[你在真实页面上点选 / 放置] --> Ext[Chrome 插件]
   Ext -->|WebSocket| Bridge[本机桥接 :3847]
-  Bridge -->|HTTP| Grok[本地 Grok]
-  Grok -->|改源码 / 下指令| App[你的 Web 应用]
+  Bridge -->|HTTP| AI[本地 Grok / Claude Code / Codex]
+  AI -->|改源码 / 下指令| App[你的 Web 应用]
 ```
 
 1. 点「选择元素」或「截图标注」，或从 **+** 组件盘放到锚点旁。
-2. 本机 Grok 读取 last-pick / last-place（selector、文案、URL、testid）。
+2. 本机 AI 读取 last-pick / last-place（selector、文案、URL、testid）。
 3. 多个放置点带 `#1` `#2` `#3` 时，按编号一次写完。
 4. 改完后再 snapshot，确认页面上就是你要的结果。
 

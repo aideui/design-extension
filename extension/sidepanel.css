@@ -338,6 +338,37 @@ body {
   background: var(--fg-grey-100);
 }
 
+.provider-item {
+  padding: 6px 10px;
+}
+
+.provider-item .n {
+  flex-shrink: 0;
+}
+
+.provider-item .p {
+  min-width: 0;
+}
+
+.provider-item:disabled {
+  cursor: default;
+}
+
+.provider-item:disabled .n {
+  color: var(--fg-grey-700);
+}
+
+.session-row .who {
+  flex-shrink: 0;
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--fg-grey-700);
+}
+
+.session-row:hover .who {
+  opacity: 0;
+}
+
 .dir-form {
   display: flex;
   gap: 6px;

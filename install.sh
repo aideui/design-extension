@@ -15,7 +15,7 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 need() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "error: missing $1" >&2
-    echo "Install Node.js and the Grok CLI first, then run this again." >&2
+    echo "Install Node.js first, then run this again." >&2
     exit 1
   fi
 }
@@ -23,8 +23,9 @@ need() {
 need node
 need npm
 
-if ! command -v grok >/dev/null 2>&1 && [ ! -x "$HOME_DIR/.grok/bin/grok" ]; then
-  echo "warning: grok CLI not found. Install Grok first, or the side panel cannot chat." >&2
+if ! command -v grok >/dev/null 2>&1 && [ ! -x "$HOME_DIR/.grok/bin/grok" ] \
+  && ! command -v claude >/dev/null 2>&1 && ! command -v codex >/dev/null 2>&1; then
+  echo "warning: no local AI CLI found. Install Grok, Claude Code or Codex, or the side panel cannot chat." >&2
 fi
 
 if [ -f "$script_dir/server/server.js" ]; then

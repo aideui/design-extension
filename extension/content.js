@@ -2644,7 +2644,7 @@ async function measureForCapture({ selector, scrollTo, hideFixed }) {
   };
 }
 
-window.__gcbContentVersion = '0.3.45';
+window.__gcbContentVersion = '0.3.46';
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'ping') {

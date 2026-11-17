@@ -61,6 +61,9 @@
         <button class="bridge-disconnect" id="bridgeSwitch" type="button">断开链接</button>
       </div>
       <div class="menu-divider"></div>
+      <div class="more-label">对话 AI</div>
+      <div class="provider-list" id="providerList"></div>
+      <div class="menu-divider"></div>
       <div class="more-label">当前目录</div>
       <div class="dir-now" id="dirNow"></div>
       <div class="dir-list" id="dirList"></div>
@@ -85,7 +88,7 @@
       <div class="setup" id="setup" hidden>
         <img src="icons/forge-logo.svg" alt="" />
         <h2>先启动本机桥接</h2>
-        <p>插件只是界面。对话和改页面需要本机 Grok 服务，装一次后会开机自启。</p>
+        <p>插件只是界面。对话和改页面需要本机桥接，由本机的 Grok、Claude Code 或 Codex 来答，装一次后会开机自启。</p>
         <p class="setup-step">终端里执行：</p>
         <pre id="installCmd">curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/main/install.sh | bash</pre>
         <button type="button" id="copyInstall">复制命令</button>
