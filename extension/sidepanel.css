@@ -305,6 +305,26 @@ body {
   min-width: 0;
 }
 
+.dir-hide {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--fg-grey-700);
+}
+
+.dir-item:hover .dir-hide {
+  display: inline-flex;
+}
+
+.dir-hide:hover {
+  background: var(--fg-grey-200);
+  color: var(--fg-black);
+}
+
 .dir-list {
   max-height: 220px;
   overflow-x: hidden;

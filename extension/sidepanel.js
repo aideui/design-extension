@@ -406,6 +406,8 @@ let currentCwd = '';
 /** 'auto' or a provider id from GET /providers. */
 let providerPref = 'auto';
 let providers = [];
+/** path → ISO time the user removed it from the folder list. */
+let hiddenDirs = {};
 let current = { id: null, cwd: null, title: '新对话', messages: [] };
 let includePick = false;
 let lastPick = null;
@@ -1420,18 +1422,40 @@ function renderSessionList() {
   }
 }
 
+/** A hidden folder comes back on its own once a newer session runs there. */
+function isDirHidden(directory) {
+  const hiddenAt = hiddenDirs[directory.path];
+  return !!hiddenAt && String(directory.updatedAt || '') <= hiddenAt;
+}
+
+async function hideDirectory(directory) {
+  hiddenDirs = { ...hiddenDirs, [directory.path]: new Date().toISOString() };
+  await chrome.storage.local.set({ hiddenDirs });
+  renderDirectories();
+}
+
 function renderDirectories() {
   dirNow.textContent = currentCwd || '未选择';
   dirList.innerHTML = '';
   for (const directory of directories) {
+    if (directory.path !== currentCwd && isDirHidden(directory)) continue;
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = `dir-item${directory.path === currentCwd ? ' active' : ''}`;
+    const remove =
+      directory.path === currentCwd
+        ? ''
+        : '<span class="dir-hide" role="button" title="从列表移除（不删文件）"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="m17 7-10 10M7 7l10 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span>';
     btn.innerHTML = `<div><div class="n">${escapeHtml(directory.name)}</div><div class="p">${escapeHtml(
       directory.path
-    )}</div></div>`;
+    )}</div></div>${remove}`;
     btn.addEventListener('click', () => {
       setCurrentCwd(directory.path);
+    });
+    btn.querySelector('.dir-hide')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideDirectory(directory);
     });
     dirList.appendChild(btn);
   }
@@ -1508,8 +1532,9 @@ function resizeInput() {
 }
 
 async function loadConfig() {
-  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd', 'provider']);
+  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd', 'provider', 'hiddenDirs']);
   providerPref = data.provider || 'auto';
+  hiddenDirs = data.hiddenDirs || {};
   port = data.port || 3847;
   token = data.token || '';
   currentCwd = data.currentCwd || '';
