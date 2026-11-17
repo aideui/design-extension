@@ -112,7 +112,7 @@ npm run cli -- snapshot
 | `last-pick` | 刚才点选的元素 |
 | `focus` | 把 agent 页签提到前台 |
 
-默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe、`--agent <名字>`（或环境变量 `FORGE_DESIGN_AGENT`）让这个 AI 用自己的后台标签，几个 AI 同时干活互不干扰。
+默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe。每个来调用的 AI 会话（Claude Code、Codex、Grok 或某个终端标签）自动用自己的后台标签，几个 AI 同时干活互不干扰，不用做任何设置；那个会话退出后它的标签会自动关掉。想固定用某个标签可以加 `--agent <名字>`。
 
 你可以切过去看 agent 页签，它会接着干；在里面点击或打字就算你接管了，agent 会在新的后台标签里打开同一个网址继续。
 
