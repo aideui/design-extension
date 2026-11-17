@@ -69,6 +69,21 @@ async function request(pathname, { method = 'GET', body } = {}) {
   return data;
 }
 
+function parseScreenshotArgs(rest) {
+  const args = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const flag = rest[i];
+    if (flag === '--full') args.fullPage = true;
+    else if (flag === '--jpeg') args.format = 'jpeg';
+    else if (flag === '--foreground') args.foreground = true;
+    else if (flag === '--selector') args.selector = rest[++i];
+    else if (flag === '--tab') args.tabId = Number(rest[++i]);
+    else if (flag === '--out') args.path = path.resolve(rest[++i]);
+    else throw new Error(`unknown screenshot flag: ${flag}`);
+  }
+  return args;
+}
+
 function usage() {
   console.log(`forge-design CLI
 
@@ -92,6 +107,7 @@ Commands:
   scroll [y]
   eval <expression>
   reload-extension
+  screenshot [--full] [--selector <css>] [--tab <id>] [--out <file>] [--jpeg] [--foreground]
   last-pick
   start-pick
   last-place
@@ -165,6 +181,9 @@ async function main() {
       break;
     case 'eval':
       args = { expression: rest.join(' ') };
+      break;
+    case 'screenshot':
+      args = parseScreenshotArgs(rest);
       break;
     case 'last-pick':
     case 'lastPick':

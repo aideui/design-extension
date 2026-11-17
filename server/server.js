@@ -105,6 +105,18 @@ function placeResponse(stored) {
   return { place: stored.place || stored, places, layout: stored.layout || null };
 }
 
+function saveScreenshot(dataUrl, outPath) {
+  const match = String(dataUrl).match(/^data:image\/(png|jpeg);base64,(.+)$/);
+  if (!match) throw new Error('unexpected screenshot data');
+  const ext = match[1] === 'jpeg' ? 'jpg' : 'png';
+  const filePath = outPath
+    ? path.resolve(outPath)
+    : path.join(os.tmpdir(), 'forge-design-shots', `shot-${Date.now()}.${ext}`);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'));
+  return filePath;
+}
+
 function json(res, code, body) {
   const data = JSON.stringify(body);
   res.writeHead(code, {
@@ -509,6 +521,10 @@ const server = http.createServer(async (req, res) => {
           ? payload.timeoutMs || 90000
           : payload.timeoutMs || 30000;
       const result = await runCommand(command, args, timeoutMs);
+      if (command === 'screenshot' && result?.dataUrl) {
+        const { dataUrl, ...rest } = result;
+        return json(res, 200, { ...rest, path: saveScreenshot(dataUrl, args.path) });
+      }
       if (result?.pick) savePick(result.pick);
       if (result?.place && !result.preview) savePlace(result.place);
       return json(res, result.error ? 500 : 200, result);
