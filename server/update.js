@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCb);
 
+const REPO_URL = 'https://github.com/forge-ui/forge-design-extension';
 export const RELEASES_API =
   'https://api.github.com/repos/forge-ui/forge-design-extension/releases/latest';
 
@@ -121,10 +122,38 @@ export async function extractZip(zipPath, dest) {
   }
 }
 
+function releaseFromTag(tag) {
+  const version = String(tag || '').replace(/^v/, '');
+  if (!version) return null;
+  const name = `forge-design-extension-v${version}.zip`;
+  return { version, zipUrl: `${REPO_URL}/releases/download/v${version}/${name}`, name };
+}
+
+/**
+ * The anonymous REST API allows 60 calls an hour per IP and then answers 403.
+ * github.com/…/releases/latest redirects to the newest tag without that limit,
+ * and release zips follow a fixed name, so try that first.
+ */
 export async function fetchLatestRelease(fetcher = fetch) {
+  try {
+    const res = await fetcher(`${REPO_URL}/releases/latest`, {
+      redirect: 'manual',
+      headers: { 'User-Agent': 'forge-design-bridge' },
+    });
+    const tag = String(res.headers?.get?.('location') || '').match(/\/releases\/tag\/([^/?#]+)/)?.[1];
+    const release = releaseFromTag(tag && decodeURIComponent(tag));
+    if (release) return release;
+  } catch {}
+  return fetchLatestReleaseFromApi(fetcher);
+}
+
+async function fetchLatestReleaseFromApi(fetcher) {
   const res = await fetcher(RELEASES_API, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'forge-design-bridge' },
   });
+  if (res.status === 403 || res.status === 429) {
+    throw new Error('GitHub 暂时限制了查询次数，过一小时再试');
+  }
   if (!res.ok) throw new Error(`GitHub release ${res.status}`);
   const data = await res.json();
   const version = String(data.tag_name || '').replace(/^v/, '');
@@ -169,12 +198,17 @@ export async function updateInstalledExtension({
   });
   if (!dirs.length) throw new Error('no Forge Design extension folder found');
 
-  const release = await fetchLatestRelease(fetcher);
+  // A git checkout updates with git pull; it only needs the release for the zip path.
+  const gitOnly = dirs.every((dir) => findGitRoot(dir));
+  const release = await fetchLatestRelease(fetcher).catch((err) => {
+    if (gitOnly) return null;
+    throw err;
+  });
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'forge-rel-'));
-  const zipPath = path.join(tmpDir, release.name);
+  const zipPath = release ? path.join(tmpDir, release.name) : null;
   const results = [];
   try {
-    const needsZip = dirs.some((dir) => !findGitRoot(dir));
+    const needsZip = !gitOnly;
     if (needsZip) await downloadFile(release.zipUrl, zipPath, fetcher);
     for (const dir of dirs) {
       results.push(await updateExtensionDir(dir, { zipPath }));
@@ -190,7 +224,7 @@ export async function updateInstalledExtension({
   }
   return {
     ok: true,
-    version: release.version,
+    version: release?.version || results.find((item) => item.version)?.version || null,
     results,
   };
 }
