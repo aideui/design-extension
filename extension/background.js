@@ -1472,6 +1472,7 @@ async function runBridgeCommand(command, args) {
         // foreground only when explicitly requested
         const foreground = !!args.foreground || !!args.focus;
         const tabId = await resolveWorkTabId({ ...args, url });
+        const navigated = waitNavigation(tabId);
         // Never force active:true unless foreground
         const tab = await chrome.tabs.update(tabId, {
           url,
@@ -1495,15 +1496,16 @@ async function runBridgeCommand(command, args) {
               useActive: false,
             };
           }
-          await waitTabComplete(tab.id);
+          await navigated;
           await markAgentTabTitle(tab.id);
         } else {
-          await waitTabComplete(tab.id);
+          await navigated;
         }
         await ensureContentScript(tab.id);
+        const landed = await chrome.tabs.get(tab.id).catch(() => tab);
         return {
           tabId: tab.id,
-          url: tab.url || url,
+          url: landed.url || url,
           silent: !foreground,
           agent: !args.useActive,
           useActive: !!args.useActive,
@@ -1851,6 +1853,29 @@ async function runBridgeCommand(command, args) {
     // Drop cursor + MutationObservers once the tool burst is over.
     if (keepAlive) scheduleAgentUiRelease();
   }
+}
+
+/**
+ * Resolve once the tab has started a new load and finished it. Plain
+ * waitTabComplete can return at once on the old page's "complete" status,
+ * before a background tab even begins navigating.
+ */
+function waitNavigation(tabId, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    let started = false;
+    const finish = () => {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    const listener = (id, info) => {
+      if (id !== tabId) return;
+      if (info.status === 'loading') started = true;
+      else if (info.status === 'complete' && started) finish();
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
 }
 
 function waitTabComplete(tabId, timeoutMs = 30000) {
