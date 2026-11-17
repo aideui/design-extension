@@ -115,6 +115,20 @@ function isDirectory(dir) {
   }
 }
 
+const SCRATCH_ROOTS = [
+  os.tmpdir(),
+  '/tmp',
+  '/private/tmp',
+  '/private/var/folders',
+  path.join(os.homedir(), '.cache'),
+  path.join(os.homedir(), 'Library'),
+];
+
+function isScratchDir(dir) {
+  if (dir === path.parse(dir).root) return true;
+  return SCRATCH_ROOTS.some((root) => dir === root || dir.startsWith(`${root}${path.sep}`));
+}
+
 export function listDirectories(sessions = listSessions({ limit: 500 })) {
   const map = new Map();
   for (const session of sessions) {
@@ -122,8 +136,8 @@ export function listDirectories(sessions = listSessions({ limit: 500 })) {
     const key = normalizeCwd(session.cwd);
     const current = map.get(key);
     if (!current) {
-      // Temp worktrees and deleted projects would only fail on send.
-      if (!isDirectory(key)) continue;
+      // Deleted projects would only fail on send; temp and cache dirs are agent scratch space.
+      if (!isDirectory(key) || isScratchDir(key)) continue;
       map.set(key, {
         path: key,
         name: path.basename(key) || key,

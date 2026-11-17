@@ -23,7 +23,10 @@ const moreMenu = document.getElementById('moreMenu');
 const bridgeSwitch = document.getElementById('bridgeSwitch');
 const bridgeState = document.getElementById('bridgeState');
 const dirList = document.getElementById('dirList');
-const providerList = document.getElementById('providerList');
+const aiGroup = document.getElementById('aiGroup');
+const aiBtn = document.getElementById('aiBtn');
+const aiLabel = document.getElementById('aiLabel');
+const aiMenu = document.getElementById('aiMenu');
 const dirNow = document.getElementById('dirNow');
 const dirForm = document.getElementById('dirForm');
 const dirInput = document.getElementById('dirInput');
@@ -1434,39 +1437,65 @@ function renderDirectories() {
   }
 }
 
-function providerNote(item) {
-  if (item.id === 'auto') {
-    const first = providers.find((provider) => provider.ready);
-    return first ? `现在用 ${first.label}，失败时换下一个` : '本机没有可用的 AI';
-  }
-  return item.ready ? '可用' : item.reason || '不可用';
+const CHECK_ICON =
+  '<svg class="check" viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+function autoTarget() {
+  return providers.find((provider) => provider.ready) || null;
 }
 
-function renderProviders() {
-  providerList.innerHTML = '';
-  const items = [{ id: 'auto', label: '自动', ready: true }, ...providers];
-  for (const item of items) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `dir-item provider-item${item.id === providerPref ? ' active' : ''}`;
-    // An unready provider stays selectable only if it is already the saved choice.
-    btn.disabled = !item.ready && item.id !== providerPref;
-    btn.innerHTML = `<span class="n">${escapeHtml(item.label)}</span><span class="p">${escapeHtml(
-      providerNote(item)
-    )}</span>`;
-    btn.addEventListener('click', async () => {
-      providerPref = item.id;
-      await chrome.storage.local.set({ provider: providerPref });
-      renderProviders();
-    });
-    providerList.appendChild(btn);
-  }
+function shortReason(item) {
+  if (item.ready) return '';
+  return item.installed === false ? '未安装' : '未登录';
+}
+
+function renderAiPicker() {
+  const chosen = providers.find((provider) => provider.id === providerPref);
+  aiLabel.textContent = chosen ? chosen.label : '自动';
+  const target = chosen || autoTarget();
+  aiBtn.title = chosen
+    ? chosen.ready
+      ? `由 ${chosen.label} 回答`
+      : `${chosen.label}：${chosen.reason || '不可用'}`
+    : target
+      ? `自动：现在由 ${target.label} 回答，失败时换下一个`
+      : '自动：本机没有可用的 AI';
+  const items = [{ id: 'auto', label: '自动', ready: true, note: target && !chosen ? target.label : '' }, ...providers];
+  aiMenu.replaceChildren(
+    ...items.map((item) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `pick-menu-item${item.id === providerPref ? ' is-current' : ''}`;
+      btn.setAttribute('role', 'menuitemradio');
+      btn.setAttribute('aria-checked', String(item.id === providerPref));
+      btn.disabled = !item.ready && item.id !== providerPref;
+      if (!item.ready && item.reason) btn.title = item.reason;
+      const note = item.note || shortReason(item);
+      btn.innerHTML = `${item.id === providerPref ? CHECK_ICON : '<span class="check"></span>'}<span>${escapeHtml(
+        item.label
+      )}</span>${note ? `<span class="note">${escapeHtml(note)}</span>` : ''}`;
+      btn.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        providerPref = item.id;
+        await chrome.storage.local.set({ provider: providerPref });
+        closeAiMenu();
+        renderAiPicker();
+      });
+      return btn;
+    })
+  );
+}
+
+function closeAiMenu() {
+  aiMenu.hidden = true;
+  aiBtn.setAttribute('aria-expanded', 'false');
+  aiGroup.classList.remove('open');
 }
 
 async function refreshProviders() {
   const data = await api('/providers');
   providers = data.providers || [];
-  renderProviders();
+  renderAiPicker();
 }
 
 function resizeInput() {
@@ -1892,11 +1921,11 @@ function closeMenus() {
   moreMenu.hidden = true;
   setPaletteOpen(false);
   closePickMenu();
+  closeAiMenu();
 }
 
 function syncMoreMenu() {
   renderDirectories();
-  dirInput.value = currentCwd || '';
 }
 
 async function openSessionInTerminal(sessionId) {
@@ -1921,6 +1950,7 @@ async function deleteLocalSession(session) {
 
 menuBtn.addEventListener('click', async (event) => {
   event.stopPropagation();
+  closeAiMenu();
   moreMenu.hidden = true;
   setPaletteOpen(false);
   menu.hidden = !menu.hidden;
@@ -1961,6 +1991,7 @@ pickBtn.addEventListener('click', (event) => {
 
 pickExpandBtn.addEventListener('click', (event) => {
   event.stopPropagation();
+  closeAiMenu();
   const opening = pickMenu.hidden;
   menu.hidden = true;
   moreMenu.hidden = true;
@@ -1990,6 +2021,7 @@ pickModeAnnotate.addEventListener('click', (event) => {
 
 paletteBtn.addEventListener('click', (event) => {
   event.stopPropagation();
+  closeAiMenu();
   const opening = palette.hidden;
   menu.hidden = true;
   moreMenu.hidden = true;
@@ -2024,17 +2056,31 @@ async function refreshBridgeSwitch() {
 
 moreBtn.addEventListener('click', async (event) => {
   event.stopPropagation();
+  closeAiMenu();
   menu.hidden = true;
   setPaletteOpen(false);
   const opening = moreMenu.hidden;
   moreMenu.hidden = !opening;
   if (!opening) return;
   syncMoreMenu();
-  renderProviders();
   refreshBridgeSwitch();
   try {
-    await Promise.all([refreshDirectories(), refreshProviders()]);
+    await refreshDirectories();
     syncMoreMenu();
+  } catch {}
+});
+
+aiBtn.addEventListener('click', async (event) => {
+  event.stopPropagation();
+  const opening = aiMenu.hidden;
+  closeMenus();
+  if (!opening) return;
+  renderAiPicker();
+  aiMenu.hidden = false;
+  aiBtn.setAttribute('aria-expanded', 'true');
+  aiGroup.classList.add('open');
+  try {
+    await refreshProviders();
   } catch {}
 });
 
@@ -2141,6 +2187,9 @@ document.addEventListener('click', (event) => {
   }
   if (!palette.hidden && !palette.contains(event.target) && !paletteBtn.contains(event.target)) {
     setPaletteOpen(false);
+  }
+  if (!aiMenu.hidden && !aiGroup.contains(event.target)) {
+    closeAiMenu();
   }
   if (!pickMenu.hidden && !pickGroup.contains(event.target)) {
     closePickMenu();

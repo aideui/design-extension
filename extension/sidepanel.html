@@ -61,9 +61,6 @@
         <button class="bridge-disconnect" id="bridgeSwitch" type="button">断开链接</button>
       </div>
       <div class="menu-divider"></div>
-      <div class="more-label">对话 AI</div>
-      <div class="provider-list" id="providerList"></div>
-      <div class="menu-divider"></div>
       <div class="more-label">当前目录</div>
       <div class="dir-now" id="dirNow"></div>
       <div class="dir-list" id="dirList"></div>
@@ -199,6 +196,24 @@
               </div>
             </div>
           </div>
+          <div class="composer-send">
+          <div class="ai-group" id="aiGroup">
+            <button
+              class="ai-btn"
+              id="aiBtn"
+              type="button"
+              title="选择回答的 AI"
+              aria-expanded="false"
+              aria-haspopup="menu"
+              aria-controls="aiMenu"
+            >
+              <span id="aiLabel">自动</span>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div class="pick-menu ai-menu" id="aiMenu" hidden role="menu"></div>
+          </div>
           <button class="send" id="sendBtn" type="submit" disabled>
             <!-- solar ArrowUpLinear -->
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
@@ -211,6 +226,7 @@
               />
             </svg>
           </button>
+          </div>
         </div>
       </form>
     </footer>
