@@ -2545,26 +2545,6 @@ async function handleDomCommand(command, args) {
       return { ok: true };
     }
 
-    case 'eval': {
-      // Restricted: only allow simple expressions via Function, no imports
-      if (!args.expression || typeof args.expression !== 'string') {
-        return { error: 'expression required' };
-      }
-      if (args.expression.length > 2000) return { error: 'expression too long' };
-      // Soft block obvious abuse
-      if (/\b(fetch|XMLHttpRequest|WebSocket|eval|Function|import)\b/.test(args.expression)) {
-        return { error: 'expression blocked for safety' };
-      }
-      try {
-        // eslint-disable-next-line no-new-func
-        const fn = new Function(`return (${args.expression})`);
-        const value = fn();
-        return { value: value == null ? null : JSON.parse(JSON.stringify(value)) };
-      } catch (err) {
-        return { error: err.message };
-      }
-    }
-
     default:
       return { error: `Unknown DOM command: ${command}` };
   }
