@@ -455,9 +455,21 @@ async function stitchScroller(tab, format, start) {
   };
 }
 
+/** Tabs being captured right now; the agent cursor stays off for them. */
+const capturingTabs = new Set();
+
 async function takeScreenshot(args = {}) {
   const resolved = await resolveScreenshotTab(args);
   if (resolved.error) return resolved;
+  capturingTabs.add(resolved.tab.id);
+  try {
+    return await takeResolvedScreenshot(resolved, args);
+  } finally {
+    capturingTabs.delete(resolved.tab.id);
+  }
+}
+
+async function takeResolvedScreenshot(resolved, args) {
   let { tab } = resolved;
   if (!tab.viaDebugger) {
     try {
@@ -1200,7 +1212,7 @@ async function resolveWorkTabId(args = {}) {
 async function enableAgentUi(tabId) {
   // Visible cursor + favicon overlay belong only on the dedicated agent tab.
   // Enabling them on the user's browsing tab steals the pointer and favicon.
-  if (!isAgentTab(tabId)) return;
+  if (!isAgentTab(tabId) || capturingTabs.has(tabId)) return;
   try {
     await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: true, trusted: true }, TOP_FRAME);
   } catch {}
@@ -2037,7 +2049,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Content script asks if this tab is the silent agent tab
   if (msg.type === 'amIAgentTab') {
-    const isAgent = isAgentTab(sender.tab?.id);
+    // While a screenshot runs, say no, so a late re-enable cannot put the cursor back in the shot.
+    const isAgent = isAgentTab(sender.tab?.id) && !capturingTabs.has(sender.tab?.id);
     sendResponse({ isAgent, agentTabId: isAgent ? sender.tab.id : null });
     return true;
   }
