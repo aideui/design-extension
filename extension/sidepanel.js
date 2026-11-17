@@ -406,6 +406,8 @@ let currentCwd = '';
 /** 'auto' or a provider id from GET /providers. */
 let providerPref = 'auto';
 let providers = [];
+/** 'panel': conversations started here; 'all': terminal sessions too. */
+let sessionScope = 'panel';
 /** path → ISO time the user removed it from the folder list. */
 let hiddenDirs = {};
 let current = { id: null, cwd: null, title: '新对话', messages: [] };
@@ -1393,9 +1395,11 @@ function renderSessionList() {
     ? ''
     : sessions.length
       ? '没有匹配的会话'
-      : currentCwd
-        ? `这个目录还没有会话：${folderName(currentCwd)}`
-        : '没有找到本地会话';
+      : sessionScope === 'panel'
+        ? '这里还没有从侧边栏发起的对话，点「全部」看终端里的会话'
+        : currentCwd
+          ? `这个目录还没有会话：${folderName(currentCwd)}`
+          : '没有找到本地会话';
   for (const session of items) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -1532,7 +1536,9 @@ function resizeInput() {
 }
 
 async function loadConfig() {
-  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd', 'provider', 'hiddenDirs']);
+  const data = await chrome.storage.local.get(['port', 'token', 'currentCwd', 'provider', 'hiddenDirs', 'sessionScope']);
+  sessionScope = data.sessionScope === 'all' ? 'all' : 'panel';
+  renderSessionScope();
   providerPref = data.provider || 'auto';
   hiddenDirs = data.hiddenDirs || {};
   port = data.port || 3847;
@@ -1567,8 +1573,29 @@ async function refreshDirectories() {
   renderDirectories();
 }
 
+function renderSessionScope() {
+  for (const btn of document.querySelectorAll('.session-scope button')) {
+    btn.setAttribute('aria-checked', String(btn.dataset.scope === sessionScope));
+  }
+}
+
+for (const btn of document.querySelectorAll('.session-scope button')) {
+  btn.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    sessionScope = btn.dataset.scope;
+    renderSessionScope();
+    await chrome.storage.local.set({ sessionScope });
+    try {
+      await refreshSessions();
+    } catch {}
+  });
+}
+
 async function refreshSessions() {
-  const query = currentCwd ? `?cwd=${encodeURIComponent(currentCwd)}` : '';
+  const params = new URLSearchParams();
+  if (currentCwd) params.set('cwd', currentCwd);
+  if (sessionScope === 'panel') params.set('scope', 'panel');
+  const query = params.toString() ? `?${params}` : '';
   const data = await api(`/sessions${query}`);
   sessions = data.sessions || [];
   renderSessionList();

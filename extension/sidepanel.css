@@ -448,7 +448,35 @@ body {
 }
 
 .session-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 10px 12px 8px;
+}
+
+.session-scope {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--fg-grey-50);
+}
+
+.session-scope button {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-grey-700);
+  font: 12px/1 Manrope, ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.session-scope button[aria-checked='true'] {
+  background: #fff;
+  color: var(--fg-black);
+  box-shadow: 0 1px 2px rgba(0, 10, 25, 0.08);
 }
 
 .session-search input {
