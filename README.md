@@ -4,8 +4,6 @@ https://github.com/user-attachments/assets/535ce7a8-f746-42ab-ad97-9f0345165487
 
 **让本机的 AI 编程助手用上你自己的 Chrome：点选组件改界面，也能读页面、点按钮、截图、看报错。**
 
-Your local coding agent, in your real Chrome: pick a component to change it, or let the agent read, click, screenshot and debug the page.
-
 Forge Design 是 [Forge UI](https://forgeui.org) 的工具：一个 Chrome 插件加一个本机桥接。AI 由你本机已登录的编程助手来当（Claude Code、Codex 等），它通过桥接操作你正在用的 Chrome，带着你的登录状态。页面内容留在本机，不经过云端。
 
 [Forge UI](https://github.com/forge-ui/forge) · [Forge Starter](https://github.com/forge-ui/forge-starter) · [License: MIT](LICENSE)
