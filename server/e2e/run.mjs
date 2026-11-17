@@ -314,9 +314,14 @@ await test('agents get separate tabs', async () => {
   cli('close-tab', '--agent', 'e2e-two');
 });
 
-await test('screenshot: agent tab in background errors clearly', async () => {
-  const res = cli('screenshot');
-  assert(res.background && /foreground/.test(res.error), 'background error', res);
+await test('screenshot: background agent tab without stealing focus', async () => {
+  cli('goto', `${BASE}/`);
+  const before = cli('status').userTab?.id;
+  const res = cli('screenshot', '--out', `${TMP}/bg.png`);
+  assert(res.background && res.path && fs.statSync(res.path).size > 1000, 'background shot', res);
+  assert(cli('status').userTab?.id === before, 'user tab unchanged');
+  const el = cli('screenshot', '--selector', '#drop', '--out', `${TMP}/bg-el.png`);
+  assert(el.width > 50 && el.height > 20, 'background element shot', el);
 });
 
 await test('screenshot: restricted / bad tab', async () => {

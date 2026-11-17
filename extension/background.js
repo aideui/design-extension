@@ -333,12 +333,26 @@ const CAPTURE_INTERVAL_MS = 550;
 const FULL_PAGE_MAX_SCREENS = 8;
 let lastCaptureAt = 0;
 
-async function captureTab(windowId, format) {
-  const wait = lastCaptureAt + CAPTURE_INTERVAL_MS - Date.now();
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  lastCaptureAt = Date.now();
-  const options = format === 'jpeg' ? { format: 'jpeg', quality: 85 } : { format: 'png' };
-  const dataUrl = await chrome.tabs.captureVisibleTab(windowId, options);
+/** One viewport frame: captureVisibleTab for a visible tab, CDP for a background one. */
+async function captureTab(tab, format) {
+  let dataUrl;
+  if (tab.viaDebugger) {
+    const params = format === 'jpeg' ? { format: 'jpeg', quality: 85 } : { format: 'png' };
+    const res = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', params);
+    dataUrl = `data:image/${format === 'jpeg' ? 'jpeg' : 'png'};base64,${res.data}`;
+  } else {
+    const wait = lastCaptureAt + CAPTURE_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastCaptureAt = Date.now();
+    const options = format === 'jpeg' ? { format: 'jpeg', quality: 85 } : { format: 'png' };
+    // It can stall while the screen is locked; fail with a reason instead of the 30 s bridge timeout.
+    dataUrl = await Promise.race([
+      chrome.tabs.captureVisibleTab(tab.windowId, options),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Chrome did not return the visible tab (screen locked or window hidden?)')), 5000)
+      ),
+    ]);
+  }
   const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
   return { dataUrl, bitmap };
 }
@@ -358,8 +372,9 @@ async function measureTab(tabId, args = {}) {
 }
 
 /**
- * captureVisibleTab only sees the selected tab of a window. A background agent
- * tab is never painted, so it must be brought forward — only when asked.
+ * captureVisibleTab only sees the selected tab of a window. A background tab
+ * is shot through a short debugger session instead (Chrome shows its
+ * "debugging this browser" bar meanwhile), or brought forward when asked.
  */
 async function resolveScreenshotTab(args) {
   let tabId = args.tabId;
@@ -373,14 +388,7 @@ async function resolveScreenshotTab(args) {
   if (isRestrictedUrl(tab.url)) return { error: `Cannot capture ${tab.url}` };
   const win = await chrome.windows.get(tab.windowId);
   if (tab.active && win.state !== 'minimized') return { tab };
-  if (!wantsForeground(args)) {
-    return {
-      error:
-        'Tab is in the background and Chrome does not paint hidden tabs. Pass foreground:true to bring it to the front, or pass tabId of a tab the user is looking at.',
-      tabId,
-      background: true,
-    };
-  }
+  if (!wantsForeground(args)) return { tab: { ...tab, viaDebugger: true }, background: true };
   tab = await chrome.tabs.update(tabId, { active: true });
   await chrome.windows.update(tab.windowId, { focused: true, ...(win.state === 'minimized' ? { state: 'normal' } : {}) });
   await waitTabComplete(tabId);
@@ -408,7 +416,7 @@ async function stitchScroller(tab, format, start) {
         scrollTo: top,
         ...(top > 0 ? { hideFixed: true } : {}),
       });
-      const shot = await captureTab(tab.windowId, format);
+      const shot = await captureTab(tab, format);
       const rect = at.scroller.rect;
       if (!canvas) {
         scale = shot.bitmap.width / at.viewport.w;
@@ -450,7 +458,29 @@ async function stitchScroller(tab, format, start) {
 async function takeScreenshot(args = {}) {
   const resolved = await resolveScreenshotTab(args);
   if (resolved.error) return resolved;
-  const { tab } = resolved;
+  let { tab } = resolved;
+  if (!tab.viaDebugger) {
+    try {
+      return await shootTab(tab, resolved, args);
+    } catch (err) {
+      if (!/did not return the visible tab/.test(err.message)) throw err;
+      // Locked screen or hidden window: the debugger can still render the tab.
+      tab = { ...tab, viaDebugger: true };
+    }
+  }
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+  } catch (err) {
+    return { error: `Cannot shoot this background tab (${err.message || err}). Pass foreground:true instead.` };
+  }
+  try {
+    return await shootTab(tab, resolved, args);
+  } finally {
+    await chrome.debugger.detach({ tabId: tab.id }).catch(() => {});
+  }
+}
+
+async function shootTab(tab, resolved, args) {
   if (args.selector && frameIdFor(args)) {
     return { error: 'Element shots inside an iframe are not supported. Pass the <iframe> element itself as the selector.' };
   }
@@ -468,11 +498,12 @@ async function takeScreenshot(args = {}) {
     title: tab.title,
     format,
     ...(resolved.broughtToFront ? { broughtToFront: true } : {}),
+    ...(resolved.background ? { background: true } : {}),
   };
 
   if (args.selector) {
     const metrics = await measureTab(tab.id, { selector: args.selector });
-    const shot = await captureTab(tab.windowId, format);
+    const shot = await captureTab(tab, format);
     const scale = shot.bitmap.width / metrics.viewport.w;
     const pad = (args.padding ?? 8) * scale;
     const sx = Math.max(0, Math.floor(metrics.rect.x * scale - pad));
@@ -495,7 +526,7 @@ async function takeScreenshot(args = {}) {
     try {
       for (let y = 0; y < totalH; y += viewportH) {
         const at = await measureTab(tab.id, { scrollTo: y, ...(y > 0 ? { hideFixed: true } : {}) });
-        const shot = await captureTab(tab.windowId, format);
+        const shot = await captureTab(tab, format);
         if (!canvas) {
           scale = shot.bitmap.width / at.viewport.w;
           canvas = new OffscreenCanvas(shot.bitmap.width, Math.ceil(totalH * scale));
@@ -517,7 +548,7 @@ async function takeScreenshot(args = {}) {
     };
   }
 
-  const shot = await captureTab(tab.windowId, format);
+  const shot = await captureTab(tab, format);
   const result = { ...base, width: shot.bitmap.width, height: shot.bitmap.height, dataUrl: shot.dataUrl };
   shot.bitmap.close?.();
   return result;
