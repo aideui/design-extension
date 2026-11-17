@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>FD Test</title>
+<style>body{font-family:sans-serif;margin:0}header{position:sticky;top:0;background:#0b5;color:#fff;padding:12px}section{height:900px;padding:20px;border-bottom:4px solid #333}#s2{background:#fde}#s3{background:#def}</style></head>
+<body><header>Sticky header</header>
+<section id="s1">
+<h1>Forge Design test</h1>
+<button id="save" onclick="document.getElementById('out').textContent='saved:'+document.getElementById('title').value">保存</button>
+<label for="title">标题</label><input id="title" placeholder="输入标题">
+<input type="checkbox" id="agree" checked> <label for="agree">同意</label>
+<button disabled>禁用按钮</button>
+<label class="upbtn">上传文件<input type="file" id="file" multiple style="display:none" onchange="document.getElementById('out').textContent='files:'+[...this.files].map(f=>f.name+':'+f.size).join(',')"></label>
+<div id="drop" style="border:2px dashed #999;padding:20px;width:200px" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.getElementById('out').textContent='dropped:'+[...event.dataTransfer.files].map(f=>f.name).join(',')">拖到这里</div>
+<select id="city"><option value="bj">北京</option><option value="sh">上海</option></select>
+<input type="file" id="single" onchange="document.getElementById('out').textContent='single:'+this.files.length">
+<a href="/page2.html" id="nav">下一页</a>
+<textarea id="memo" placeholder="备注"></textarea>
+<p id="out">idle</p>
+<my-widget></my-widget>
+<iframe id="same" src="/same.html" width="300" height="120"></iframe>
+<iframe id="nested" src="/nested.html" width="320" height="200"></iframe>
+<iframe id="cross" src="http://localhost:8782/frame.html" width="300" height="120"></iframe>
+</section><section id="s2">second screen</section><section id="s3">third screen</section>
+<script>
+customElements.define('my-widget', class extends HTMLElement{constructor(){super();const r=this.attachShadow({mode:'open'});r.innerHTML='<button id="shadowbtn">影子按钮</button>';r.querySelector('button').onclick=()=>document.getElementById('out').textContent='shadow clicked'}});
+console.log('page loaded', {n:1});
+console.warn('a warning');
+fetch('/missing.json').then(r=>console.log('missing status', r.status));
+setTimeout(()=>{ throw new Error('boom from timeout') }, 50);
+</script></body></html>

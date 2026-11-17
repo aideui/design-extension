@@ -1,0 +1,1 @@
+<!doctype html><meta charset="utf-8"><title>Page 2</title><body><h1>第二页</h1><button id="push" onclick="history.pushState({},'','/page2.html?step=2');fetch('/nope-'+Date.now()).then(r=>console.error('spa fetch',r.status))">SPA 跳转</button><input id="q" onkeydown="if(event.key==='Enter')document.getElementById('o').textContent='enter:'+this.value"><p id="o">-</p></body>
