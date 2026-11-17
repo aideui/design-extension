@@ -23,12 +23,40 @@ wait <selector>
 exists <selector>
 scroll [y]
 eval <expression>
+screenshot [--full] [--selector <css|ref>] [--out <file>] [--jpeg] [--foreground]
+upload <selector> <file...>
+frames
+console [--errors] [--clear] [--limit n]
+network [--failed] [--clear] [--limit n]
+reload-extension
 last-pick
 start-pick
 last-place
 start-place
 raw <json>
 ```
+
+Every command also takes `--tab <id>` and `--frame <id>`.
+
+## Refs
+
+`snapshot` gives each interactive element a `ref` with role, name, value and state. Use the ref wherever a selector goes, until the next snapshot:
+
+```sh
+scripts/bridge.sh snapshot 40
+scripts/bridge.sh fill e3 'hello'
+scripts/bridge.sh click e7
+```
+
+If the page has iframes, the top-frame `snapshot` lists them under `frames`. Snapshot one with `--frame <id>`; its refs look like `f1242e3` and route to that frame on their own. `text` already includes each frame's text.
+
+## Screenshots
+
+The image goes to a file; the command prints its `path`. Chrome does not paint background tabs, so the agent tab needs `--foreground` (brings it to the front). A tab the user is looking at can be captured with `--tab <id>` without stealing anything. `--full` scrolls and stitches up to 8 screens, hiding fixed/sticky bars after the first; pages that scroll an inner container only give one screen.
+
+## Console and network
+
+`console` and `network` read a monitor that starts when the agent tab loads a page. On other tabs the first call starts it; run `reload` to capture page load. `network` also lists resource timings since load. `--clear` empties the buffer after reading.
 
 ## Raw examples
 

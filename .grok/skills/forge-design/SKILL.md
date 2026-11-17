@@ -22,7 +22,7 @@ Use `scripts/bridge.sh` only when you need the live page (last pick, last place,
 3. Otherwise run `scripts/bridge.sh last-pick`. If `pick` exists and `pickedAt` is within the last 30 minutes, that is the target. Use `selector`, `text`, `url`, and `testid`.
 4. If there is no recent pick or place, ask the user to click **选择元素** or **截图标注**, or the **+** palette, then read again. You may `scripts/bridge.sh snapshot 80` on the current page when they already said to inspect it. If the prompt includes `annotated screenshot`, follow the red boxes / arrows / pen marks / written labels instead of guessing a selector.
 5. Prefer stable `id`, `data-testid`, `aria-label`, or role selectors.
-6. After writing placed components, snapshot again before claiming it worked. For a numbered multi-place, write the whole batch in one pass.
+6. After writing placed components, snapshot again before claiming it worked. For a numbered multi-place, write the whole batch in one pass. Use `screenshot` when the look matters, and `console --errors` / `network --failed` when the page misbehaves.
 
 ## Placing a Forge block
 
@@ -40,6 +40,8 @@ Use `scripts/bridge.sh` only when you need the live page (last pick, last place,
 ## Interaction
 
 - `click <selector>` moves the visible cursor, then clicks. Do not call `.click()` through `eval`.
+- Prefer snapshot refs (`e12`, `f3e12` inside an iframe) over hand-written selectors.
+- `upload <selector> <file...>` for file inputs, upload buttons and drop zones.
 - `fill <selector> <text>` replaces field contents.
 - `type <text>` only when the field is already focused.
 - Confirm before send, publish, purchase, delete, or permission changes.
