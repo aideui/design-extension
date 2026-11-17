@@ -3,6 +3,7 @@ node_modules/
 .bridge-pick.json
 .bridge-place.json
 .bridge-sessions.json
+.bridge-providers.json
 .bridge-home
 .DS_Store
 *.log

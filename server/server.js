@@ -21,6 +21,8 @@ import {
 } from './sessions.js';
 import {
   providerStatuses,
+  autoOrder,
+  recordProviderUse,
   candidatesFor,
   sessionOwner,
   listAllSessions,
@@ -212,7 +214,7 @@ function createSseTextBatcher(res, { intervalMs = 16 } = {}) {
 const CLI_PATH = path.join(__dirname, 'cli.js');
 const SKILL_PATH = path.join(ROOT, '.grok', 'skills', 'forge-design', 'SKILL.md');
 
-/** Grok has the forge-design skill; other agents need to be told how to reach the page. */
+/** Not every agent has the forge-design skill installed; tell each one how to reach the page. */
 function bridgeHint() {
   return `读取或操作用户的 Chrome 页面用本机桥：node ${CLI_PATH} <命令>。常用：snapshot（元素带编号）、click e3、fill e3 文字、screenshot --tab <标签 id>、console --errors、network --failed。完整说明见 ${SKILL_PATH}。发送、发布、付款、删除前先问用户。`;
 }
@@ -293,9 +295,11 @@ setInterval(() => {
 
 function unavailableMessage() {
   const reasons = providerStatuses()
-    .filter((item) => !item.ready)
+    .filter((item) => item.installed && !item.ready)
     .map((item) => `${item.label}：${item.reason}`);
-  return `没有可用的本机 AI。${reasons.join('；')}`;
+  return reasons.length
+    ? `本机没有已登录的 AI 编程助手。${reasons.join('；')}`
+    : '本机没有找到 AI 编程助手，装一个并登录（目前支持 Claude Code、Codex、Grok）。';
 }
 
 /**
@@ -403,7 +407,7 @@ async function handleTurn(req, res, { session, owner } = {}) {
       try {
         const run = provider.start({
           prompt: text,
-          rules: provider.id === 'grok' ? context : [context, bridgeHint()].filter(Boolean).join('\n'),
+          rules: [context, bridgeHint()].filter(Boolean).join('\n'),
           sessionId: session?.id,
           cwd,
           env: { FORGE_DESIGN_AGENT: agent },
@@ -427,6 +431,7 @@ async function handleTurn(req, res, { session, owner } = {}) {
           panelAgents.set(sessionId, agent);
           rememberPanelSession(sessionId, provider.id);
         }
+        if (!result.stopped) recordProviderUse(provider.id);
         return finish({
           type: 'end',
           sessionId,
@@ -570,7 +575,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/providers') {
     if (!checkAuth(req)) return unauthorized(res);
-    return json(res, 200, { providers: providerStatuses() });
+    return json(res, 200, { providers: providerStatuses(), auto: autoOrder().map((provider) => provider.id) });
   }
 
   if (req.method === 'GET' && url.pathname === '/directories') {
