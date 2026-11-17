@@ -73,6 +73,10 @@
     <div class="menu" id="menu" hidden>
       <div class="session-search">
         <input id="sessionSearch" type="search" placeholder="搜索会话" />
+        <div class="session-scope" role="radiogroup" aria-label="会话范围">
+          <button type="button" data-scope="panel" role="radio">侧边栏</button>
+          <button type="button" data-scope="all" role="radio" title="也显示终端里的会话">全部</button>
+        </div>
       </div>
       <div class="menu-empty" id="sessionEmpty" hidden>没有找到本地会话</div>
       <div class="menu-list" id="sessionList"></div>

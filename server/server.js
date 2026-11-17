@@ -34,6 +34,7 @@ const ROOT = path.resolve(__dirname, '..');
 const STATE_PATH = path.join(ROOT, '.bridge-state.json');
 const PICK_PATH = path.join(ROOT, '.bridge-pick.json');
 const PLACE_PATH = path.join(ROOT, '.bridge-place.json');
+const PANEL_SESSIONS_PATH = path.join(ROOT, '.bridge-sessions.json');
 const PORT = Number(process.env.BRIDGE_PORT || 3847);
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 
@@ -216,6 +217,29 @@ function bridgeHint() {
   return `读取或操作用户的 Chrome 页面用本机桥：node ${CLI_PATH} <命令>。常用：snapshot（元素带编号）、click e3、fill e3 文字、screenshot --tab <标签 id>、console --errors、network --failed。完整说明见 ${SKILL_PATH}。发送、发布、付款、删除前先问用户。`;
 }
 
+/** Conversations started from the side panel, so its list can leave out terminal sessions. */
+const panelSessions = readJsonFile(PANEL_SESSIONS_PATH) || {};
+
+function savePanelSessions() {
+  try {
+    fs.writeFileSync(PANEL_SESSIONS_PATH, JSON.stringify(panelSessions, null, 2));
+  } catch (err) {
+    console.error('[bridge] failed to persist panel sessions:', err.message);
+  }
+}
+
+function rememberPanelSession(sessionId, provider) {
+  if (panelSessions[sessionId]) return;
+  panelSessions[sessionId] = { provider, createdAt: new Date().toISOString() };
+  savePanelSessions();
+}
+
+function forgetPanelSession(sessionId) {
+  if (!panelSessions[sessionId]) return;
+  delete panelSessions[sessionId];
+  savePanelSessions();
+}
+
 /** Side-panel conversation → bridge agent key, so each chat drives its own tab. */
 const panelAgents = new Map();
 
@@ -356,7 +380,10 @@ async function handleTurn(req, res, { session, owner } = {}) {
         const result = await run.done;
         if (streamError && !result.text && !result.stopped) throw new Error(streamError);
         const sessionId = result.sessionId || session?.id || null;
-        if (sessionId) panelAgents.set(sessionId, agent);
+        if (sessionId) {
+          panelAgents.set(sessionId, agent);
+          rememberPanelSession(sessionId, provider.id);
+        }
         return finish({
           type: 'end',
           sessionId,
@@ -490,7 +517,12 @@ const server = http.createServer(async (req, res) => {
     if (!checkAuth(req)) return unauthorized(res);
     const limit = Number(url.searchParams.get('limit') || 40);
     const cwd = url.searchParams.get('cwd') || '';
-    return json(res, 200, { sessions: listAllSessions({ limit, cwd }) });
+    // scope=panel: only conversations started from the side panel.
+    const panelOnly = url.searchParams.get('scope') === 'panel';
+    const sessions = listAllSessions({ limit: panelOnly ? 500 : limit, cwd });
+    return json(res, 200, {
+      sessions: panelOnly ? sessions.filter((item) => panelSessions[item.id]).slice(0, limit) : sessions,
+    });
   }
 
   if (req.method === 'GET' && url.pathname === '/providers') {
@@ -522,6 +554,7 @@ const server = http.createServer(async (req, res) => {
     const owner = sessionOwner(sessionMatch[1]);
     if (!owner) return json(res, 404, { ok: false, error: 'session not found' });
     const result = owner.deleteSession(sessionMatch[1]);
+    forgetPanelSession(sessionMatch[1]);
     if (!result.ok) return json(res, 404, result);
     return json(res, 200, result);
   }
