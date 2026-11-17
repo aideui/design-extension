@@ -1,11 +1,11 @@
 ---
 name: forge-design
-description: Use when editing or inspecting a web app in the user's real Chrome through Forge Design. Triggers include pick-to-edit, last-pick, page screenshot, selector, layout, copy, and local Grok driving the current page. Do not use for social-account ops or general web scraping.
+description: Use when you need the user's real Chrome through Forge Design — editing or inspecting a web app (pick-to-edit, last-pick, last-place, selectors, layout, copy), reading or clicking through a page the user is logged in to, taking page screenshots, or reading console and network errors. Do not use for social-account ops or general web scraping.
 ---
 
 # Forge Design
 
-Forge Design is a local design tool. The user picks a component in Chrome, or places a Forge block onto the page; you change that UI with their local Grok.
+Forge Design is a local design tool. The user picks a component in Chrome, or places a Forge block onto the page; you change that UI from their local coding agent (you).
 
 Use `scripts/bridge.sh` only when you need the live page (last pick, last place, snapshot, click). Prefer the side panel pick or place over guessing selectors.
 
@@ -13,7 +13,8 @@ Use `scripts/bridge.sh` only when you need the live page (last pick, last place,
 
 - The user selected something with **选择元素** or **截图标注**, placed a block from the component palette, or asks to change a specific component on the current page.
 - You need the current URL, title, last-pick selector, last-place target, or a page snapshot to understand the UI.
-- Do not treat this as a generic browser agent. Do not automate posting, following, shopping, or account changes.
+- You need a page the user is logged in to, a screenshot of it, or its console / network errors. Use the user's Chrome rather than a headless browser.
+- Do not automate posting, following, shopping, or account changes.
 
 ## Workflow
 
