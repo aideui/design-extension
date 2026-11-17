@@ -20,8 +20,12 @@ let connected = false;
 let reconnectTimer = null;
 let lastError = null;
 let actionLog = [];
-/** Dedicated background tab id for silent automation */
-let agentTabId = null;
+/**
+ * Dedicated background tab per agent (args.agent, default "default"), so two
+ * agents driving Chrome at once do not navigate each other's page.
+ */
+const agentTabs = new Map();
+const DEFAULT_AGENT = 'default';
 /** Last element the user pointed at in picker mode */
 let lastPick = null;
 /** Last Forge block the user placed onto the page */
@@ -57,9 +61,9 @@ function scheduleAgentUiRelease(delayMs = AGENT_UI_IDLE_MS) {
   if (agentUiReleaseTimer) clearTimeout(agentUiReleaseTimer);
   agentUiReleaseTimer = setTimeout(() => {
     agentUiReleaseTimer = null;
-    if (agentTabId) {
-      disableAgentUi(agentTabId).catch(() => {});
-      detachDebugger(agentTabId).catch(() => {});
+    for (const tabId of agentTabs.values()) {
+      disableAgentUi(tabId).catch(() => {});
+      detachDebugger(tabId).catch(() => {});
     }
   }, delayMs);
 }
@@ -69,10 +73,34 @@ async function releaseAgentUiNow() {
     clearTimeout(agentUiReleaseTimer);
     agentUiReleaseTimer = null;
   }
-  if (agentTabId) {
-    await disableAgentUi(agentTabId);
-    await detachDebugger(agentTabId);
+  for (const tabId of agentTabs.values()) {
+    await disableAgentUi(tabId);
+    await detachDebugger(tabId);
   }
+}
+
+function agentKey(args = {}) {
+  const key = String(args.agent || '').trim().slice(0, 64);
+  return key || DEFAULT_AGENT;
+}
+
+function getAgentTab(key = DEFAULT_AGENT) {
+  return agentTabs.get(key) || null;
+}
+
+function isAgentTab(tabId) {
+  if (!tabId) return false;
+  for (const id of agentTabs.values()) if (id === tabId) return true;
+  return false;
+}
+
+function agentKeyOfTab(tabId) {
+  for (const [key, id] of agentTabs) if (id === tabId) return key;
+  return null;
+}
+
+async function saveAgentTabs() {
+  await chrome.storage.local.set({ agentTabs: Object.fromEntries(agentTabs) });
 }
 
 /** Last focused normal window — the one the user is already in. */
@@ -109,10 +137,15 @@ function logAction(entry) {
 }
 
 async function loadConfig() {
-  const data = await chrome.storage.local.get(['port', 'token', 'agentTabId', 'lastPick', 'lastPlace']);
+  const data = await chrome.storage.local.get(['port', 'token', 'agentTabs', 'agentTabId', 'lastPick', 'lastPlace']);
   port = data.port || DEFAULT_PORT;
   token = data.token || null;
-  agentTabId = data.agentTabId || null;
+  agentTabs.clear();
+  for (const [key, id] of Object.entries(data.agentTabs || {})) if (id) agentTabs.set(key, id);
+  // Before per-agent tabs there was a single agentTabId.
+  if (!agentTabs.size && data.agentTabId) agentTabs.set(DEFAULT_AGENT, data.agentTabId);
+  // Tabs closed while the extension was reloading never fired onRemoved here.
+  for (const [key, id] of [...agentTabs]) if (!(await tabExists(id))) agentTabs.delete(key);
   lastPick = data.lastPick || null;
   lastPlace = data.lastPlace || null;
 }
@@ -120,10 +153,7 @@ async function loadConfig() {
 async function saveConfig(partial) {
   if (partial.port != null) port = partial.port;
   if (partial.token != null) token = partial.token;
-  if (partial.agentTabId !== undefined) agentTabId = partial.agentTabId;
-  const toSave = { port, token };
-  if (partial.agentTabId !== undefined) toSave.agentTabId = partial.agentTabId;
-  await chrome.storage.local.set(toSave);
+  await chrome.storage.local.set({ port, token });
 }
 
 function broadcastStatus() {
@@ -334,7 +364,7 @@ async function measureTab(tabId, args = {}) {
 async function resolveScreenshotTab(args) {
   let tabId = args.tabId;
   if (!tabId && args.useActive) tabId = (await getUserFacingTab())?.id;
-  if (!tabId) tabId = agentTabId;
+  if (!tabId) tabId = getAgentTab(agentKey(args));
   if (args.tabId && !(await tabExists(args.tabId))) return { error: `Tab ${args.tabId} not found. Run tabs.` };
   if (!tabId || !(await tabExists(tabId))) {
     return { error: 'No agent tab yet. Run goto first, or pass tabId of a visible tab.' };
@@ -806,15 +836,22 @@ async function disableAgentUi(tabId) {
   } catch {}
 }
 
-async function setAgentTabId(nextId) {
-  const prev = agentTabId;
+async function setAgentTab(key, nextId) {
+  const prev = getAgentTab(key);
   if (prev === nextId) {
     if (nextId) await enableAgentUi(nextId);
     return nextId;
   }
-  agentTabId = nextId || null;
-  await saveConfig({ agentTabId });
-  if (prev) await disableAgentUi(prev);
+  if (nextId) {
+    // One tab belongs to one agent.
+    const owner = agentKeyOfTab(nextId);
+    if (owner) agentTabs.delete(owner);
+    agentTabs.set(key, nextId);
+  } else {
+    agentTabs.delete(key);
+  }
+  await saveAgentTabs();
+  if (prev && !isAgentTab(prev)) await disableAgentUi(prev);
   if (nextId) await enableAgentUi(nextId);
   return nextId;
 }
@@ -895,14 +932,15 @@ async function createSilentTab(url, { active = false } = {}) {
   return tab;
 }
 
-async function relocateAgentIfNeeded(preferUrl) {
-  if (!agentTabId || !(await tabExists(agentTabId))) return null;
+async function relocateAgentIfNeeded(key, preferUrl) {
+  const current = getAgentTab(key);
+  if (!current || !(await tabExists(current))) return null;
   const userWindowId = await getLastFocusedWindowId();
-  const agentWindowId = await getTabWindowId(agentTabId);
+  const agentWindowId = await getTabWindowId(current);
 
-  if (await isUserLookingAtTab(agentTabId)) {
+  if (await isUserLookingAtTab(current)) {
     const created = await createAgentWorkspaceTab(preferUrl);
-    await setAgentTabId(created.id);
+    await setAgentTab(key, created.id);
     waitTabComplete(created.id).then(() => markAgentTabTitle(created.id));
     return created.id;
   }
@@ -910,41 +948,43 @@ async function relocateAgentIfNeeded(preferUrl) {
   // Leftover isolated window from 0.3.39: move work back into the user's window.
   if (userWindowId && agentWindowId && agentWindowId !== userWindowId) {
     const created = await createBackgroundTab(preferUrl, userWindowId);
-    const old = agentTabId;
-    await setAgentTabId(created.id);
+    await setAgentTab(key, created.id);
     waitTabComplete(created.id).then(() => markAgentTabTitle(created.id));
-    await closeAbandonedAgentWindow(old);
+    await closeAbandonedAgentWindow(current);
     return created.id;
   }
 
-  return agentTabId;
+  return current;
 }
 
 /**
  * Resolve the dedicated silent agent tab (background tab in the user's window).
  */
-async function ensureAgentTab(preferUrl) {
-  const relocated = await relocateAgentIfNeeded(preferUrl);
+async function ensureAgentTab(key, preferUrl) {
+  const relocated = await relocateAgentIfNeeded(key, preferUrl);
   if (relocated) return relocated;
 
-  const user = await getUserFacingTab();
-  const userWindowId = await getLastFocusedWindowId();
-  const all = await chrome.tabs.query({});
-  const found = all.find(
-    (t) =>
-      t.id &&
-      t.id !== user?.id &&
-      t.title &&
-      t.title.includes(AGENT_TAB_TITLE_MARK) &&
-      (userWindowId == null || t.windowId === userWindowId)
-  );
-  if (found?.id) {
-    await setAgentTabId(found.id);
-    return found.id;
+  if (key === DEFAULT_AGENT) {
+    const user = await getUserFacingTab();
+    const userWindowId = await getLastFocusedWindowId();
+    const all = await chrome.tabs.query({});
+    const found = all.find(
+      (t) =>
+        t.id &&
+        t.id !== user?.id &&
+        !isAgentTab(t.id) &&
+        t.title &&
+        t.title.includes(AGENT_TAB_TITLE_MARK) &&
+        (userWindowId == null || t.windowId === userWindowId)
+    );
+    if (found?.id) {
+      await setAgentTab(key, found.id);
+      return found.id;
+    }
   }
 
   const tab = await createAgentWorkspaceTab(preferUrl);
-  await setAgentTabId(tab.id);
+  await setAgentTab(key, tab.id);
   waitTabComplete(tab.id).then(() => markAgentTabTitle(tab.id));
   return tab.id;
 }
@@ -953,7 +993,7 @@ async function ensureAgentTab(preferUrl) {
  * Pin a tab as the agent workspace. If the user is looking at it, clone to a
  * background tab in the same window instead of navigating under their eyes.
  */
-async function adoptAgentTab(tabId, preferUrl) {
+async function adoptAgentTab(key, tabId, preferUrl) {
   if (tabId && (await isUserLookingAtTab(tabId))) {
     let url = preferUrl;
     if (!url) {
@@ -963,19 +1003,19 @@ async function adoptAgentTab(tabId, preferUrl) {
       } catch {}
     }
     const created = await createAgentWorkspaceTab(url);
-    await setAgentTabId(created.id);
+    await setAgentTab(key, created.id);
     if (url) await waitTabComplete(created.id);
     waitTabComplete(created.id).then(() => markAgentTabTitle(created.id));
     return created.id;
   }
   if (tabId && (await tabExists(tabId))) {
-    await setAgentTabId(tabId);
+    await setAgentTab(key, tabId);
     return tabId;
   }
-  return ensureAgentTab(preferUrl);
+  return ensureAgentTab(key, preferUrl);
 }
 
-/** Resolve work tab: explicit tabId > agent tab. Never defaults to user active tab. */
+/** Resolve work tab: explicit tabId > this agent's tab. Never defaults to user active tab. */
 async function resolveWorkTabId(args = {}) {
   // useActive: true only if caller explicitly wants current tab (rare).
   if (args.useActive) {
@@ -985,13 +1025,13 @@ async function resolveWorkTabId(args = {}) {
   if (args.tabId && (await tabExists(args.tabId))) {
     if (!(await isUserLookingAtTab(args.tabId))) return args.tabId;
   }
-  return ensureAgentTab(args.url);
+  return ensureAgentTab(agentKey(args), args.url);
 }
 
 async function enableAgentUi(tabId) {
   // Visible cursor + favicon overlay belong only on the dedicated agent tab.
   // Enabling them on the user's browsing tab steals the pointer and favicon.
-  if (!tabId || tabId !== agentTabId) return;
+  if (!isAgentTab(tabId)) return;
   try {
     await chrome.tabs.sendMessage(tabId, { type: 'agent-ui-enable', enabled: true, trusted: true }, TOP_FRAME);
   } catch {}
@@ -1003,7 +1043,7 @@ const CONTENT_SCRIPTS = ['agent-ui.js', 'vendor/forge-palette.js', 'content.js']
 const CONTENT_SCRIPT_VERSION = chrome.runtime.getManifest().version;
 
 async function ensureContentScript(tabId, opts = {}) {
-  const agentUi = opts.agentUi !== false && tabId === agentTabId;
+  const agentUi = opts.agentUi !== false && isAgentTab(tabId);
   // Prefer ping-first so we do NOT re-inject content.js on every command.
   // Re-injection stacks message listeners and races cursor movement on SPA sites
   // like x.com. Stale builds (version mismatch) force a tab reload once.
@@ -1135,10 +1175,10 @@ async function listFrames(tabId, { textChars = 0 } = {}) {
 async function sendToTab(tabId, message) {
   const frameId = frameIdFor(message.args);
   if (frameId) return sendToFrame(tabId, frameId, message);
-  const ok = await ensureContentScript(tabId, { agentUi: tabId === agentTabId });
+  const ok = await ensureContentScript(tabId, { agentUi: isAgentTab(tabId) });
   if (!ok) return { error: 'Cannot inject content script on this page (chrome:// or blocked)' };
   // Cursor overlay only on the dedicated agent tab — never the user's page.
-  if (tabId === agentTabId) await enableAgentUi(tabId);
+  if (isAgentTab(tabId)) await enableAgentUi(tabId);
   try {
     return await chrome.tabs.sendMessage(tabId, message, TOP_FRAME);
   } catch (err) {
@@ -1265,7 +1305,7 @@ async function handleCommand(command, args) {
     command === 'agent-idle'
   ) {
     await releaseAgentUiNow();
-    return { ok: true, released: true, agentTabId };
+    return { ok: true, released: true };
   }
 
   const keepAlive = !READONLY_COMMANDS.has(command);
@@ -1273,13 +1313,15 @@ async function handleCommand(command, args) {
   // Isolation model: never attach debugger or restore tabs after a silent
   // command. Correcting focus with tabs.update({ active: true }) is itself a steal.
   const silent = keepAlive && !wantsForeground(args);
-  if (silent && agentTabId) {
-    await detachDebugger(agentTabId);
+  const key = agentKey(args);
+  if (silent && getAgentTab(key)) {
+    await detachDebugger(getAgentTab(key));
   }
   try {
     switch (command) {
       case 'status': {
         const userTab = await getActiveTab();
+        const agentTabId = getAgentTab(key);
         let agent = null;
         if (agentTabId && (await tabExists(agentTabId))) {
           try {
@@ -1292,7 +1334,9 @@ async function handleCommand(command, args) {
           silent: true,
           lastPick,
           lastPlace,
+          agent: key,
           agentTabId: agentTabId || null,
+          agentTabs: Object.fromEntries(agentTabs),
           agentTab: agent
             ? { id: agent.id, url: agent.url, title: agent.title, active: agent.active }
             : null,
@@ -1309,14 +1353,15 @@ async function handleCommand(command, args) {
       case 'tabs': {
         const tabs = await chrome.tabs.query({});
         return {
-          agentTabId,
+          agentTabId: getAgentTab(key),
           tabs: tabs.map((t) => ({
             id: t.id,
             url: t.url,
             title: t.title,
             active: t.active,
             windowId: t.windowId,
-            isAgent: t.id === agentTabId,
+            isAgent: isAgentTab(t.id),
+            ...(isAgentTab(t.id) ? { agent: agentKeyOfTab(t.id) } : {}),
           })),
         };
       }
@@ -1336,7 +1381,7 @@ async function handleCommand(command, args) {
         // useActive means "operate user's current tab this once" — do not permanently
         // hijack that tab as the silent agent workspace.
         if (!args.useActive) {
-          const adopted = await adoptAgentTab(tab.id, url);
+          const adopted = await adoptAgentTab(key, tab.id, url);
           if (adopted !== tab.id) {
             await chrome.tabs.update(adopted, { url });
             await waitTabComplete(adopted);
@@ -1369,7 +1414,7 @@ async function handleCommand(command, args) {
         // Default silent tab: background tab in the existing window.
         const foreground = !!args.foreground || !!args.focus;
         const tab = await createSilentTab(args.url, { active: foreground });
-        await setAgentTabId(tab.id);
+        await setAgentTab(key, tab.id);
         if (args.url) await waitTabComplete(tab.id);
         await markAgentTabTitle(tab.id);
         await ensureContentScript(tab.id);
@@ -1385,13 +1430,13 @@ async function handleCommand(command, args) {
         // By default: pin agentTabId only, do NOT steal UI focus.
         // Pass focus:true / foreground:true to actually bring tab to front.
         const wantFocus = !!args.focus || !!args.foreground;
-        const requested = args.tabId || (await ensureAgentTab());
+        const requested = args.tabId || (await ensureAgentTab(key));
         let tabId;
         if (wantFocus || args.adopt) {
-          await setAgentTabId(requested);
+          await setAgentTab(key, requested);
           tabId = requested;
         } else {
-          tabId = await adoptAgentTab(requested);
+          tabId = await adoptAgentTab(key, requested);
         }
         if (wantFocus) {
           const tab = await chrome.tabs.update(tabId, { active: true });
@@ -1422,7 +1467,7 @@ async function handleCommand(command, args) {
       }
 
       case 'close-tab': {
-        const tabId = Number(args.tabId) || agentTabId;
+        const tabId = Number(args.tabId) || getAgentTab(key);
         if (!tabId || !(await tabExists(tabId))) return { error: 'No such tab' };
         await chrome.tabs.remove(tabId);
         return { ok: true, closed: tabId };
@@ -1430,7 +1475,7 @@ async function handleCommand(command, args) {
 
       case 'focus': {
         // Explicit focus only
-        const tabId = args.tabId || agentTabId;
+        const tabId = args.tabId || getAgentTab(key);
         if (!tabId) return { error: 'no tab to focus' };
         const tab = await chrome.tabs.update(tabId, { active: true });
         if (tab.windowId) {
@@ -1754,8 +1799,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   // Content script asks if this tab is the silent agent tab
   if (msg.type === 'amIAgentTab') {
-    const isAgent = !!(sender.tab && sender.tab.id === agentTabId);
-    sendResponse({ isAgent, agentTabId });
+    const isAgent = isAgentTab(sender.tab?.id);
+    sendResponse({ isAgent, agentTabId: isAgent ? sender.tab.id : null });
     return true;
   }
 
@@ -1767,7 +1812,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       lastError,
       lastPick,
       lastPlace,
-      agentTabId,
+      agentTabId: getAgentTab(),
       silent: true,
       log: actionLog.slice(0, 20),
     });
@@ -1941,16 +1986,17 @@ if (chrome.sidePanel?.setPanelBehavior) {
 
 // Start console/network capture as soon as the agent tab commits a new page.
 chrome.webNavigation?.onCommitted.addListener((details) => {
-  if (details.tabId !== agentTabId || details.frameId !== 0) return;
+  if (!isAgentTab(details.tabId) || details.frameId !== 0) return;
   if (isRestrictedUrl(details.url)) return;
   runInPage(details.tabId, 0, installPageMonitor).catch(() => {});
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   savePendingPlaces(tabId, null).catch(() => {});
-  if (tabId === agentTabId) {
-    agentTabId = null;
-    saveConfig({ agentTabId: null }).catch(() => {});
+  const owner = agentKeyOfTab(tabId);
+  if (owner) {
+    agentTabs.delete(owner);
+    saveAgentTabs().catch(() => {});
   }
 });
 

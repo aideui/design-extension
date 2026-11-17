@@ -119,7 +119,7 @@ export function mapStreamEvent(event, state) {
   return out;
 }
 
-export function start({ prompt, rules, sessionId, cwd, timeoutMs = 600000, onEvent }) {
+export function start({ prompt, rules, sessionId, cwd, env, timeoutMs = 600000, onEvent }) {
   const file = bin();
   if (!file) throw new Error('Claude Code is not installed');
   const args = [
@@ -140,6 +140,7 @@ export function start({ prompt, rules, sessionId, cwd, timeoutMs = 600000, onEve
     bin: file,
     args,
     cwd,
+    env,
     timeoutMs,
     label: 'claude',
     onLine: (event) => {

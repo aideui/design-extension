@@ -15,6 +15,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Own background tab: never navigate a tab another agent is working in.
+process.env.FORGE_DESIGN_AGENT ||= 'e2e';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, '..', 'cli.js');
 const PAGES = path.join(HERE, 'pages');
@@ -295,6 +298,20 @@ await test('big page snapshot speed', async () => {
   const last = cli('snapshot', 3000);
   assert(last.interactive.length === 3000, 'all 3000');
   console.log(`     3000 refs in ${last._ms}ms`);
+});
+
+await test('agents get separate tabs', async () => {
+  const one = cli('goto', `${BASE}/page2.html`, '--agent', 'e2e-one');
+  const two = cli('goto', `${BASE}/csp.html`, '--agent', 'e2e-two');
+  assert(one.tabId && two.tabId && one.tabId !== two.tabId, 'two tabs', [one, two]);
+  assert(cli('title', '--agent', 'e2e-one').title === 'Page 2', 'one kept its page');
+  assert(cli('title', '--agent', 'e2e-two').title === 'CSP', 'two kept its page');
+  const status = cli('status', '--agent', 'e2e-two');
+  assert(status.agent === 'e2e-two' && status.agentTabId === two.tabId, 'status per agent', status);
+  const tabs = cli('tabs').tabs;
+  assert(tabs.find((t) => t.id === one.tabId)?.agent === 'e2e-one', 'tabs shows owner');
+  cli('close-tab', '--agent', 'e2e-one');
+  cli('close-tab', '--agent', 'e2e-two');
 });
 
 await test('screenshot: agent tab in background errors clearly', async () => {
