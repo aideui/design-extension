@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/mai
 
 会安装依赖、拉起 `127.0.0.1:3847`，并在 macOS 上写成开机自启。仓库里开发可以直接 `./install.sh`。
 
-可选：把项目 skill 装到本机 Grok，点选和改页面时不用每次重讲用法：
+可选：把 forge-design skill 装进本机有的 AI 编程助手（Claude Code、Codex、Grok，有哪个装哪个），在终端里用它们时也知道怎么操作页面，不用每次重讲用法：
 
 ```bash
 ./install-skill.sh
