@@ -1,12 +1,12 @@
 # Forge Design
 
-https://github.com/user-attachments/assets/535ce7a8-f746-42ab-ad97-9f0345165487
+<img src="assets/demo.gif" alt="在页面上选中「新建账号」按钮，让 AI 把文案改成「添加成员」，源码和页面随即更新" width="100%" />
 
 **让本机的 AI 编程助手用上你自己的 Chrome：点选组件改界面，也能读页面、点按钮、截图、看报错。**
 
 Forge Design 是 [Forge UI](https://forgeui.org) 的工具：一个 Chrome 插件加一个本机桥接。AI 由你本机已登录的编程助手来当（Claude Code、Codex 等），它通过桥接操作你正在用的 Chrome，带着你的登录状态。页面内容留在本机，不经过云端。
 
-[Forge UI](https://github.com/forge-ui/forge) · [Forge Starter](https://github.com/forge-ui/forge-starter) · [License: MIT](LICENSE)
+[完整演示视频（41 秒）](https://github.com/user-attachments/assets/535ce7a8-f746-42ab-ad97-9f0345165487) · [Forge UI](https://github.com/forge-ui/forge) · [Forge Starter](https://github.com/forge-ui/forge-starter) · [License: MIT](LICENSE)
 
 ## 两种用法
 
