@@ -836,6 +836,26 @@ async function disableAgentUi(tabId) {
   } catch {}
 }
 
+/** agent key → { tabId, url } of the tab the user took over, until reported. */
+const takeovers = new Map();
+
+async function tellTab(tabId, message) {
+  try {
+    await chrome.tabs.sendMessage(tabId, message, TOP_FRAME);
+  } catch {}
+}
+
+async function releaseToUser(tabId, url) {
+  const key = agentKeyOfTab(tabId);
+  if (!key) return;
+  agentTabs.delete(key);
+  takeovers.set(key, { tabId, url: url && !isRestrictedUrl(url) ? url : undefined });
+  await saveAgentTabs();
+  await disableAgentUi(tabId);
+  await tellTab(tabId, { type: 'agent-tab', agent: false });
+  logAction({ command: 'user-took-over', args: { tabId, agent: key } });
+}
+
 async function setAgentTab(key, nextId) {
   const prev = getAgentTab(key);
   if (prev === nextId) {
@@ -851,7 +871,10 @@ async function setAgentTab(key, nextId) {
     agentTabs.delete(key);
   }
   await saveAgentTabs();
-  if (prev && !isAgentTab(prev)) await disableAgentUi(prev);
+  if (prev && !isAgentTab(prev)) {
+    await disableAgentUi(prev);
+    await tellTab(prev, { type: 'agent-tab', agent: false });
+  }
   if (nextId) await enableAgentUi(nextId);
   return nextId;
 }
@@ -938,13 +961,6 @@ async function relocateAgentIfNeeded(key, preferUrl) {
   const userWindowId = await getLastFocusedWindowId();
   const agentWindowId = await getTabWindowId(current);
 
-  if (await isUserLookingAtTab(current)) {
-    const created = await createAgentWorkspaceTab(preferUrl);
-    await setAgentTab(key, created.id);
-    waitTabComplete(created.id).then(() => markAgentTabTitle(created.id));
-    return created.id;
-  }
-
   // Leftover isolated window from 0.3.39: move work back into the user's window.
   if (userWindowId && agentWindowId && agentWindowId !== userWindowId) {
     const created = await createBackgroundTab(preferUrl, userWindowId);
@@ -963,6 +979,9 @@ async function relocateAgentIfNeeded(key, preferUrl) {
 async function ensureAgentTab(key, preferUrl) {
   const relocated = await relocateAgentIfNeeded(key, preferUrl);
   if (relocated) return relocated;
+  // The user took this agent's last tab; pick up where the agent left off.
+  const resume = takeovers.get(key);
+  if (resume && !preferUrl) preferUrl = resume.url;
 
   if (key === DEFAULT_AGENT) {
     const user = await getUserFacingTab();
@@ -990,10 +1009,12 @@ async function ensureAgentTab(key, preferUrl) {
 }
 
 /**
- * Pin a tab as the agent workspace. If the user is looking at it, clone to a
- * background tab in the same window instead of navigating under their eyes.
+ * Pin a tab as the agent workspace. If it is a tab the user is looking at,
+ * clone to a background tab in the same window instead of taking theirs.
  */
 async function adoptAgentTab(key, tabId, preferUrl) {
+  // The agent's own tab stays its own even while the user watches it.
+  if (tabId && getAgentTab(key) === tabId) return tabId;
   if (tabId && (await isUserLookingAtTab(tabId))) {
     let url = preferUrl;
     if (!url) {
@@ -1241,7 +1262,11 @@ async function cdpSend(tabId, method, params) {
   return chrome.debugger.sendCommand({ tabId }, method, params || {});
 }
 
+/** tabId → time of the agent's last CDP input; those events are trusted too. */
+const agentTrustedInputAt = new Map();
+
 async function cdpClick(tabId, x, y) {
+  agentTrustedInputAt.set(tabId, Date.now());
   const point = { x: Math.round(x), y: Math.round(y) };
   await cdpSend(tabId, 'Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
   await cdpSend(tabId, 'Input.dispatchMouseEvent', {
@@ -1293,6 +1318,21 @@ async function clickViaCdpOrDom(tabId, args) {
 }
 
 async function handleCommand(command, args) {
+  const result = await runBridgeCommand(command, args);
+  // Tell the agent once that its old tab is gone, so it knows refs and page state reset.
+  const key = agentKey(args);
+  const takeover = takeovers.get(key);
+  if (takeover && result && typeof result === 'object' && getAgentTab(key) && getAgentTab(key) !== takeover.tabId) {
+    takeovers.delete(key);
+    result.tookOver = {
+      tabId: takeover.tabId,
+      note: 'The user started using your previous tab, so it is theirs now. You are on a new tab; page state and refs start fresh.',
+    };
+  }
+  return result;
+}
+
+async function runBridgeCommand(command, args) {
   // Keep upload payloads out of the side-panel log.
   logAction({
     command,
@@ -1804,6 +1844,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'user-took-over') {
+    const tabId = sender.tab?.id;
+    const ownInput = Date.now() - (agentTrustedInputAt.get(tabId) || 0) < 1500;
+    if (tabId && isAgentTab(tabId) && !ownInput) releaseToUser(tabId, msg.url).catch(() => {});
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (msg.type === 'getStatus') {
     sendResponse({
       connected,
@@ -1984,9 +2032,17 @@ if (chrome.sidePanel?.setPanelBehavior) {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 }
 
+const USER_TRANSITIONS = new Set(['typed', 'auto_bookmark', 'keyword', 'generated']);
+
 // Start console/network capture as soon as the agent tab commits a new page.
 chrome.webNavigation?.onCommitted.addListener((details) => {
   if (!isAgentTab(details.tabId) || details.frameId !== 0) return;
+  const qualifiers = details.transitionQualifiers || [];
+  // Address bar, bookmarks and back/forward are the user, not the agent.
+  if (USER_TRANSITIONS.has(details.transitionType) || qualifiers.includes('forward_back') || qualifiers.includes('from_address_bar')) {
+    releaseToUser(details.tabId, null).catch(() => {});
+    return;
+  }
   if (isRestrictedUrl(details.url)) return;
   runInPage(details.tabId, 0, installPageMonitor).catch(() => {});
 });

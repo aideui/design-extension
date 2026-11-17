@@ -2619,6 +2619,38 @@ function setFixedHidden(hidden) {
   }
 }
 
+// Keys that only move around the page; pressing them is watching, not taking over.
+const VIEW_KEYS = new Set([
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ',
+  'Shift', 'Control', 'Alt', 'Meta', 'Escape', 'Tab',
+]);
+let takeoverWatch = false;
+
+function onTrustedInput(event) {
+  if (!event.isTrusted) return;
+  if (event.type === 'keydown' && VIEW_KEYS.has(event.key)) return;
+  watchForTakeover(false);
+  try {
+    chrome.runtime.sendMessage({ type: 'user-took-over', url: location.href }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch {}
+}
+
+/**
+ * On an agent tab, a real click or keystroke means the user is using the tab
+ * now. Watching or scrolling does not count. Agent input is synthetic
+ * (isTrusted false), so it never trips this.
+ */
+function watchForTakeover(on) {
+  if (!IS_TOP_FRAME || on === takeoverWatch) return;
+  takeoverWatch = on;
+  for (const type of ['pointerdown', 'keydown']) {
+    if (on) window.addEventListener(type, onTrustedInput, true);
+    else window.removeEventListener(type, onTrustedInput, true);
+  }
+}
+
 /** Geometry for background screenshots. Kept off handleDomCommand so the agent cursor stays hidden. */
 async function measureForCapture({ selector, scrollTo, hideFixed }) {
   if (hideFixed != null) setFixedHidden(hideFixed);
@@ -2661,6 +2693,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg.enabled === false) window.__gcbAgent?.disable();
       else if (!msg.trusted) window.__gcbAgent?.enable();
     } catch {}
+    if (msg.enabled !== false) watchForTakeover(true);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'agent-tab') {
+    watchForTakeover(!!msg.agent);
     sendResponse({ ok: true });
     return true;
   }
