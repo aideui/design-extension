@@ -107,13 +107,20 @@ npm run cli -- snapshot
 | `screenshot` | 截图存成文件；`--selector` 截单个元素，`--full` 拼整页 |
 | `upload <sel> <file...>` | 往文件框或拖拽区上传本地文件 |
 | `frames` | 列出页面里的 iframe |
+| `eval <js>` | 在页面里执行任意 JavaScript（支持 await，不受页面 CSP 限制）；`--file` 跑脚本文件 |
 | `console` / `network` | 页面日志、报错和请求（`--errors` / `--failed`） |
 | `last-pick` | 刚才点选的元素 |
 | `focus` | 把 agent 页签提到前台 |
 
-默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe。
+默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe、`--agent <名字>`（或环境变量 `FORGE_DESIGN_AGENT`）让这个 AI 用自己的后台标签，几个 AI 同时干活互不干扰。
 
-Chrome 不绘制后台标签，所以截 agent 页签要加 `--foreground`（会切到前台）；你正在看的标签用 `--tab <id>` 可以直接截。
+你可以切过去看 agent 页签，它会接着干；在里面点击或打字就算你接管了，agent 会在新的后台标签里打开同一个网址继续。
+
+截图不用切到前台：后台标签通过一次短暂的调试会话截取（Chrome 会短暂显示“正在调试此浏览器”的提示条）。整页截图对“只有内容区滚动”的后台页面也能拼完整。
+
+## 回归测试
+
+桥接和插件连上后，在 `server/` 下运行 `npm run e2e`：在你的 Chrome 里用自己的后台标签跑一遍本地测试页（iframe、上传、CSP、日志、截图等），结束会关掉它开的标签。
 
 ## HTTP API
 

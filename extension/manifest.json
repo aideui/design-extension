@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Forge Design",
-  "version": "0.3.46",
+  "version": "0.3.47",
   "description": "基于 Forge UI 的设计工具。点选或放置组件即可修改页面，由你本地的 Grok、Claude Code 或 Codex 驱动。",
   "permissions": [
     "tabs",
