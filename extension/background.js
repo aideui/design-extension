@@ -1421,6 +1421,13 @@ async function handleCommand(command, args) {
         return { ok: true, reloading: true, version: chrome.runtime.getManifest().version };
       }
 
+      case 'close-tab': {
+        const tabId = Number(args.tabId) || agentTabId;
+        if (!tabId || !(await tabExists(tabId))) return { error: 'No such tab' };
+        await chrome.tabs.remove(tabId);
+        return { ok: true, closed: tabId };
+      }
+
       case 'focus': {
         // Explicit focus only
         const tabId = args.tabId || agentTabId;

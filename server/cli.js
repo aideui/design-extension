@@ -140,6 +140,7 @@ Commands:
   goto <url>
   newtab [url]
   activate <tabId>
+  close-tab [tabId]
   reload
   text
   snapshot [limit]
@@ -220,6 +221,9 @@ async function main() {
       break;
     case 'activate':
       args = { tabId: Number(rest[0]) };
+      break;
+    case 'close-tab':
+      args = rest[0] ? { tabId: Number(rest[0]) } : {};
       break;
     case 'click':
     case 'wait':
