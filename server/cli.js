@@ -15,6 +15,7 @@
  *   node cli.js raw '{"command":"snapshot","args":{"limit":30}}'
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,6 +103,36 @@ function readUploadFiles(paths) {
   });
 }
 
+// Wrappers between an agent and this CLI; the first process above them is the agent.
+const PASS_THROUGH = /^-?(sh|bash|zsh|fish|dash|ksh|tcsh|csh|env|timeout|xargs|node|npm|npx|bridge\.sh)$/;
+
+/**
+ * Which agent is calling: the nearest ancestor that is not a shell or Node
+ * wrapper (a Claude Code / Codex / Grok session, or a terminal tab). Each one
+ * gets its own Chrome tab without having to pass --agent.
+ */
+function callerAgent() {
+  try {
+    const table = new Map();
+    for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid=,comm='], { encoding: 'utf8' }).split('\n')) {
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      if (match) table.set(Number(match[1]), { ppid: Number(match[2]), name: path.basename(match[3]) });
+    }
+    let pid = process.ppid;
+    for (let depth = 0; pid > 1 && depth < 12; depth += 1) {
+      const entry = table.get(pid);
+      if (!entry) break;
+      // npm rewrites its title to "npm run …"; judge by the first word.
+      if (!PASS_THROUGH.test(entry.name.split(' ')[0])) {
+        // name#pid: the bridge closes this tab once that process is gone.
+        return { agent: `${entry.name.replace(/[^\w.-]/g, '').slice(0, 24) || 'proc'}#${pid}` };
+      }
+      pid = entry.ppid;
+    }
+  } catch {}
+  return {};
+}
+
 function parseMonitorArgs(rest) {
   const args = {};
   for (let i = 0; i < rest.length; i += 1) {
@@ -164,8 +195,9 @@ Commands:
   start-place
   raw <json>
 
-Any command takes --tab <id> (an open tab), --frame <id> (an iframe from frames)
-and --agent <name> (its own background tab; also FORGE_DESIGN_AGENT).
+Any command takes --tab <id> (an open tab) and --frame <id> (an iframe from frames).
+Each calling agent session gets its own background tab automatically;
+--agent <name> (or FORGE_DESIGN_AGENT) picks one explicitly.
 Snapshot refs (e12, f3e12) work wherever a selector does.
 
 Examples:
@@ -190,8 +222,7 @@ async function main() {
 
   // --tab / --frame / --agent work on any command. --agent (or FORGE_DESIGN_AGENT)
   // gives this caller its own background tab, so parallel agents do not collide.
-  const target = {};
-  if (process.env.FORGE_DESIGN_AGENT) target.agent = process.env.FORGE_DESIGN_AGENT;
+  const target = process.env.FORGE_DESIGN_AGENT ? { agent: process.env.FORGE_DESIGN_AGENT } : callerAgent();
   for (const [flag, key] of [['--tab', 'tabId'], ['--frame', 'frameId'], ['--agent', 'agent']]) {
     const at = rest.indexOf(flag);
     if (at === -1) continue;

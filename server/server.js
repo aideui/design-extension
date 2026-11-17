@@ -248,6 +248,49 @@ function panelAgentFor(session) {
   return `panel-${(session?.id || crypto.randomUUID()).slice(0, 8)}`;
 }
 
+const PANEL_IDLE_MS = 30 * 60 * 1000;
+const agentLastSeen = new Map();
+
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+/**
+ * Close tabs whose agent is gone: name#pid keys once that process exits,
+ * side-panel conversations after 30 idle minutes. Named agents stay.
+ */
+async function sweepAgentTabs() {
+  if (!extensionSocket) return;
+  let status;
+  try {
+    status = await runCommand('status', {}, 5000);
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  for (const key of Object.keys(status.agentTabs || {})) {
+    const pid = Number(key.match(/#(\d+)$/)?.[1]);
+    let gone = false;
+    if (pid) gone = !processAlive(pid);
+    else if (key.startsWith('panel-')) {
+      if (!agentLastSeen.has(key)) agentLastSeen.set(key, now);
+      gone = now - agentLastSeen.get(key) > PANEL_IDLE_MS;
+    }
+    if (!gone) continue;
+    agentLastSeen.delete(key);
+    await runCommand('forget-agent', { agent: key }, 5000).catch(() => {});
+  }
+}
+
+setInterval(() => {
+  sweepAgentTabs().catch(() => {});
+}, 60 * 1000).unref();
+
 function unavailableMessage() {
   const reasons = providerStatuses()
     .filter((item) => !item.ready)
@@ -607,6 +650,7 @@ const server = http.createServer(async (req, res) => {
     const command = payload.command || payload.cmd;
     const args = payload.args || {};
     if (!command) return json(res, 400, { error: 'command required' });
+    if (args.agent) agentLastSeen.set(args.agent, Date.now());
     if (command === 'last-pick' || command === 'lastPick') {
       return json(res, 200, { pick: lastPick });
     }

@@ -1656,6 +1656,22 @@ async function runBridgeCommand(command, args) {
         return { ok: true, reloading: true, version: chrome.runtime.getManifest().version };
       }
 
+      case 'forget-agent': {
+        // The bridge says this agent is gone: close its tab unless the user is on it.
+        const tabId = getAgentTab(key);
+        if (!tabId || args.agent == null) return { ok: true, closed: false };
+        agentTabs.delete(key);
+        takeovers.delete(key);
+        await saveAgentTabs();
+        if (await isUserLookingAtTab(tabId)) {
+          await disableAgentUi(tabId);
+          await tellTab(tabId, { type: 'agent-tab', agent: false });
+          return { ok: true, closed: false, tabId };
+        }
+        await chrome.tabs.remove(tabId).catch(() => {});
+        return { ok: true, closed: true, tabId };
+      }
+
       case 'close-tab': {
         const tabId = Number(args.tabId) || getAgentTab(key);
         if (!tabId || !(await tabExists(tabId))) return { error: 'No such tab' };

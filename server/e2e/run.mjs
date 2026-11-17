@@ -331,6 +331,13 @@ await test('agents get separate tabs', async () => {
   cli('close-tab', '--agent', 'e2e-two');
 });
 
+await test('callers are told apart without --agent', async () => {
+  // A non-shell parent process stands in for an agent session.
+  const out = execFileSync('python3', ['-c', `import subprocess,sys; sys.stdout.write(subprocess.run(['node', ${JSON.stringify(CLI)}, 'status'], capture_output=True, text=True, env={k: v for k, v in __import__('os').environ.items() if k != 'FORGE_DESIGN_AGENT'}).stdout)`], { encoding: 'utf8' });
+  const agent = JSON.parse(out).agent;
+  assert(/^[\w.-]+#\d+$/.test(agent) && agent !== 'e2e', 'auto agent key', agent);
+});
+
 await test('screenshot: background agent tab without stealing focus', async () => {
   cli('goto', `${BASE}/`);
   const before = cli('status').userTab?.id;

@@ -41,7 +41,7 @@ Every command also takes `--tab <id>`, `--frame <id>` and `--agent <name>`.
 
 ## Your own tab
 
-Each agent name gets its own background tab, so parallel agents do not navigate each other's page. Set `FORGE_DESIGN_AGENT` (or pass `--agent`) to something unique per session; without it you share the `default` tab. The side panel already gives every conversation its own.
+Each agent session gets its own background tab automatically: the CLI looks at which process called it (your Claude Code / Codex / Grok session, or a terminal tab), so parallel agents never navigate each other's page. The tab closes once that process exits. `--agent <name>` or `FORGE_DESIGN_AGENT` picks a named tab instead, which stays until closed.
 
 The user may switch to your tab to watch; keep working. If they click or type in it, it becomes theirs: your next command runs in a new background tab at the same URL and its result has `tookOver` — page state and refs start fresh.
 
