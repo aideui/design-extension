@@ -388,6 +388,65 @@ async function resolveScreenshotTab(args) {
   return { tab, broughtToFront: true };
 }
 
+/**
+ * Full-page shot of an app shell whose main panel scrolls: the first frame
+ * gives everything around the panel, later frames only the panel's slice.
+ * The area below the panel is shifted down by the extra panel height.
+ */
+async function stitchScroller(tab, format, start) {
+  const panel = start.scroller;
+  const viewportH = start.viewport.h;
+  const maxScroll = panel.scrollHeight - panel.clientHeight;
+  const extra = Math.min(maxScroll, viewportH * (FULL_PAGE_MAX_SCREENS - 1));
+  let canvas = null;
+  let ctx = null;
+  let scale = 1;
+  try {
+    for (let top = 0; ; top = Math.min(top + panel.clientHeight, extra)) {
+      const at = await measureTab(tab.id, {
+        scroller: true,
+        scrollTo: top,
+        ...(top > 0 ? { hideFixed: true } : {}),
+      });
+      const shot = await captureTab(tab.windowId, format);
+      const rect = at.scroller.rect;
+      if (!canvas) {
+        scale = shot.bitmap.width / at.viewport.w;
+        canvas = new OffscreenCanvas(shot.bitmap.width, Math.ceil((viewportH + extra) * scale));
+        ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const bottom = Math.round((rect.y + rect.h) * scale);
+        ctx.drawImage(shot.bitmap, 0, 0, shot.bitmap.width, bottom, 0, 0, shot.bitmap.width, bottom);
+        const below = shot.bitmap.height - bottom;
+        if (below > 0) {
+          const dest = Math.round(extra * scale) + bottom;
+          ctx.drawImage(shot.bitmap, 0, bottom, shot.bitmap.width, below, 0, dest, shot.bitmap.width, below);
+        }
+      } else {
+        const sx = Math.round(rect.x * scale);
+        const sy = Math.round(rect.y * scale);
+        const sw = Math.round(rect.w * scale);
+        const sh = Math.round(rect.h * scale);
+        const dy = Math.round((rect.y + at.scroller.scrollTop) * scale);
+        ctx.drawImage(shot.bitmap, sx, sy, sw, sh, sx, dy, sw, sh);
+      }
+      shot.bitmap.close?.();
+      if (at.scroller.scrollTop >= extra) break;
+    }
+  } finally {
+    await measureTab(tab.id, { scroller: true, scrollTo: panel.scrollTop, hideFixed: false }).catch(() => {});
+  }
+  return {
+    fullPage: true,
+    scroller: true,
+    width: canvas.width,
+    height: canvas.height,
+    truncated: maxScroll > extra,
+    dataUrl: await encodeCanvas(canvas, format),
+  };
+}
+
 async function takeScreenshot(args = {}) {
   const resolved = await resolveScreenshotTab(args);
   if (resolved.error) return resolved;
@@ -427,7 +486,8 @@ async function takeScreenshot(args = {}) {
   }
 
   if (args.fullPage) {
-    const start = await measureTab(tab.id);
+    const start = await measureTab(tab.id, { detectScroller: true });
+    if (start.scroller) return { ...base, ...(await stitchScroller(tab, format, start)) };
     const viewportH = start.viewport.h;
     const totalH = Math.min(start.scrollHeight, viewportH * FULL_PAGE_MAX_SCREENS);
     let canvas = null;

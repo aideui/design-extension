@@ -1,1 +1,20 @@
-<!doctype html><meta charset="utf-8"><title>Inner</title><style>html,body{height:100%;margin:0;overflow:hidden}main{height:100%;overflow:auto}div{height:3000px;background:linear-gradient(#fff,#88f)}</style><body><main><div>内层滚动</div></main></body>
+<!doctype html><meta charset="utf-8"><title>Inner</title>
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; font: 14px sans-serif; }
+  .shell { display: grid; grid-template-rows: 48px 1fr 32px; grid-template-columns: 160px 1fr; height: 100%; }
+  header { grid-column: 1 / 3; background: #0b5; color: #fff; padding: 14px; }
+  nav { background: #eef; padding: 12px; }
+  main { overflow: auto; }
+  th { position: sticky; top: 0; background: #ffd; }
+  td, th { border-bottom: 1px solid #ddd; padding: 8px; text-align: left; }
+  footer { grid-column: 1 / 3; background: #333; color: #fff; padding: 8px; }
+</style>
+<div class="shell">
+  <header>顶栏</header>
+  <nav>侧边栏</nav>
+  <main><table width="100%"><thead><tr><th>编号</th><th>名称</th></tr></thead><tbody id="rows"></tbody></table></main>
+  <footer>底栏</footer>
+</div>
+<script>
+  rows.innerHTML = Array.from({ length: 120 }, (_, i) => `<tr><td>${i + 1}</td><td>第 ${i + 1} 行</td></tr>`).join('');
+</script>
