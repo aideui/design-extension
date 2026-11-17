@@ -85,7 +85,7 @@
       <div class="setup" id="setup" hidden>
         <img src="icons/forge-logo.svg" alt="" />
         <h2>先启动本机桥接</h2>
-        <p>插件只是界面。对话和改页面需要本机 Grok 服务，装一次后会开机自启。</p>
+        <p>插件只是界面。对话和改页面需要本机桥接，由本机的 Grok、Claude Code 或 Codex 来答，装一次后会开机自启。</p>
         <p class="setup-step">终端里执行：</p>
         <pre id="installCmd">curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/main/install.sh | bash</pre>
         <button type="button" id="copyInstall">复制命令</button>
@@ -196,6 +196,24 @@
               </div>
             </div>
           </div>
+          <div class="composer-send">
+          <div class="ai-group" id="aiGroup">
+            <button
+              class="ai-btn"
+              id="aiBtn"
+              type="button"
+              title="选择回答的 AI"
+              aria-expanded="false"
+              aria-haspopup="menu"
+              aria-controls="aiMenu"
+            >
+              <span id="aiLabel">自动</span>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <div class="pick-menu ai-menu" id="aiMenu" hidden role="menu"></div>
+          </div>
           <button class="send" id="sendBtn" type="submit" disabled>
             <!-- solar ArrowUpLinear -->
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
@@ -208,6 +226,7 @@
               />
             </svg>
           </button>
+          </div>
         </div>
       </form>
     </footer>

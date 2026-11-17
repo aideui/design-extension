@@ -14,17 +14,19 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import os from 'node:os';
 import {
-  listSessions,
   listDirectories,
   resolveDirectory,
-  readSession,
-  deleteSession,
-  runGrok,
-  startGrokStream,
   writeScreenshotFile,
   buildGrokContext,
-  openSessionInTerminal,
 } from './sessions.js';
+import {
+  providerStatuses,
+  candidatesFor,
+  sessionOwner,
+  listAllSessions,
+  readAnySession,
+} from './providers/index.js';
+import { runInTerminal } from './providers/bin.js';
 import { updateInstalledExtension } from './update.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -206,7 +208,27 @@ function createSseTextBatcher(res, { intervalMs = 16 } = {}) {
   };
 }
 
-async function handleGrokTurn(req, res, { session } = {}) {
+const CLI_PATH = path.join(__dirname, 'cli.js');
+const SKILL_PATH = path.join(ROOT, '.grok', 'skills', 'forge-design', 'SKILL.md');
+
+/** Grok has the forge-design skill; other agents need to be told how to reach the page. */
+function bridgeHint() {
+  return `读取或操作用户的 Chrome 页面用本机桥：node ${CLI_PATH} <命令>。常用：snapshot（元素带编号）、click e3、fill e3 文字、screenshot --tab <标签 id>、console --errors、network --failed。完整说明见 ${SKILL_PATH}。发送、发布、付款、删除前先问用户。`;
+}
+
+function unavailableMessage() {
+  const reasons = providerStatuses()
+    .filter((item) => !item.ready)
+    .map((item) => `${item.label}：${item.reason}`);
+  return `没有可用的本机 AI。${reasons.join('；')}`;
+}
+
+/**
+ * One chat turn. A new conversation tries the chosen provider, or every ready
+ * one in order for "auto", moving on when a provider fails before replying.
+ * An existing conversation stays with the provider that owns it.
+ */
+async function handleTurn(req, res, { session, owner } = {}) {
   let payload;
   try {
     payload = await readJson(req);
@@ -216,9 +238,13 @@ async function handleGrokTurn(req, res, { session } = {}) {
   const text = String(payload.text || payload.prompt || '').trim();
   if (!text) return json(res, 400, { error: 'text required' });
   const cwd = payload.cwd || session?.cwd || os.homedir();
+  // spawn reports a missing cwd as ENOENT on the binary, which reads like a broken install.
+  if (!resolveDirectory(cwd).exists) {
+    return json(res, 400, { error: `工作目录不存在：${cwd}。点右上角 ··· 换一个目录。` });
+  }
   const screenshotPath = writeScreenshotFile(payload.screenshot);
   const places = Array.isArray(payload.places) ? payload.places : payload.place?.places;
-  const rules = buildGrokContext({
+  const context = buildGrokContext({
     page: payload.page,
     screenshotPath,
     screenshotKind: payload.screenshotKind || null,
@@ -227,7 +253,6 @@ async function handleGrokTurn(req, res, { session } = {}) {
     place: payload.place,
     places,
   });
-  const prompt = text;
   if (places?.length || payload.place?.component) {
     savePlace({
       ...(payload.place || {}),
@@ -236,85 +261,111 @@ async function handleGrokTurn(req, res, { session } = {}) {
       placedAt: new Date().toISOString(),
     });
   }
+
+  const candidates = owner ? [owner] : candidatesFor(payload.provider);
+  if (!candidates.length) return json(res, 503, { error: unavailableMessage() });
+
   const stream = payload.stream === true || String(req.headers.accept || '').includes('text/event-stream');
-  if (!stream) {
-    try {
-      const result = await runGrok({
-        prompt,
-        rules,
-        sessionId: session?.id,
-        cwd,
-        timeoutMs: payload.timeoutMs,
-      });
-      const sessionId = result.sessionId || result.session_id || session?.id || null;
-      return json(res, 200, {
-        sessionId,
-        text: result.text || '',
-        session: sessionId ? readSession(sessionId) : null,
-      });
-    } catch (err) {
-      return json(res, 500, { error: err.message });
-    } finally {
-      releaseAgentUiAfterTurn();
-    }
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
-  if (typeof res.flushHeaders === 'function') {
-    try {
-      res.flushHeaders();
-    } catch {}
-  }
-  res.write('\n');
-  flushHttp(res);
-
-  const textBatcher = createSseTextBatcher(res);
-  const { child, done } = startGrokStream({
-    prompt,
-    rules,
-    sessionId: session?.id,
-    cwd,
-    timeoutMs: payload.timeoutMs,
-    onEvent: (event) => {
-      if (event.type === 'text' && event.data) {
-        textBatcher.pushText(event.data);
-        return;
-      }
-      textBatcher.flush();
-      writeSse(res, event);
-    },
-  });
-
-  const stop = () => {
-    try {
-      child.kill('SIGTERM');
-    } catch {}
-  };
-  req.on('close', stop);
-
-  try {
-    const result = await done;
-    if (res.writableEnded) return;
-    textBatcher.flush();
-    const sessionId = result.sessionId || session?.id || null;
-    writeSse(res, {
-      type: 'end',
-      sessionId,
-      text: result.text || '',
-      stopped: !!result.stopped,
-      session: sessionId ? readSession(sessionId) : null,
+  if (stream) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
-    res.end();
-  } catch (err) {
+    if (typeof res.flushHeaders === 'function') {
+      try {
+        res.flushHeaders();
+      } catch {}
+    }
+    res.write('\n');
+    flushHttp(res);
+  }
+  const textBatcher = stream ? createSseTextBatcher(res) : null;
+  const send = (event) => {
+    if (!stream) return;
+    if (event.type === 'text') {
+      textBatcher.pushText(event.data);
+      return;
+    }
+    textBatcher.flush();
+    writeSse(res, event);
+  };
+  const finish = (body, code = 200) => {
+    if (!stream) return json(res, code, body);
     if (res.writableEnded) return;
     textBatcher.flush();
-    writeSse(res, { type: 'error', message: err.message });
+    writeSse(res, body);
     res.end();
+  };
+
+  let child = null;
+  let closed = false;
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    closed = true;
+    try {
+      child?.kill('SIGTERM');
+    } catch {}
+  });
+
+  const failures = [];
+  try {
+    for (const [index, provider] of candidates.entries()) {
+      if (index > 0) {
+        const previous = failures[failures.length - 1];
+        send({
+          type: 'provider',
+          provider: provider.id,
+          label: provider.label,
+          fallbackFrom: previous.label,
+          reason: previous.message,
+        });
+      }
+      let replied = false;
+      let streamError = null;
+      try {
+        const run = provider.start({
+          prompt: text,
+          rules: provider.id === 'grok' ? context : [context, bridgeHint()].filter(Boolean).join('\n'),
+          sessionId: session?.id,
+          cwd,
+          screenshotPath,
+          timeoutMs: payload.timeoutMs,
+          onEvent: (event) => {
+            // Hold errors back: auto mode may still move on to the next provider.
+            if (event.type === 'error') {
+              streamError = event.message;
+              return;
+            }
+            if (event.type === 'text') replied = true;
+            send(event);
+          },
+        });
+        child = run.child;
+        const result = await run.done;
+        if (streamError && !result.text && !result.stopped) throw new Error(streamError);
+        const sessionId = result.sessionId || session?.id || null;
+        return finish({
+          type: 'end',
+          sessionId,
+          text: result.text || '',
+          stopped: !!result.stopped,
+          provider: provider.id,
+          providerLabel: provider.label,
+          fallbackFrom: failures.length ? failures[failures.length - 1].label : null,
+          session: sessionId ? readAnySession(sessionId, provider) : null,
+        });
+      } catch (err) {
+        const message = streamError || err.message;
+        failures.push({ id: provider.id, label: provider.label, message });
+        const last = index === candidates.length - 1;
+        if (replied || closed || last) {
+          const prefix = `${provider.label}：`;
+          return finish({ type: 'error', error: `${prefix}${message}`, message: `${prefix}${message}` }, 500);
+        }
+      }
+    }
   } finally {
     // Codex-style: release page agent UI (cursor/observers) when the turn ends.
     releaseAgentUiAfterTurn();
@@ -428,12 +479,17 @@ const server = http.createServer(async (req, res) => {
     if (!checkAuth(req)) return unauthorized(res);
     const limit = Number(url.searchParams.get('limit') || 40);
     const cwd = url.searchParams.get('cwd') || '';
-    return json(res, 200, { sessions: listSessions({ limit, cwd }) });
+    return json(res, 200, { sessions: listAllSessions({ limit, cwd }) });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/providers') {
+    if (!checkAuth(req)) return unauthorized(res);
+    return json(res, 200, { providers: providerStatuses() });
   }
 
   if (req.method === 'GET' && url.pathname === '/directories') {
     if (!checkAuth(req)) return unauthorized(res);
-    return json(res, 200, { directories: listDirectories() });
+    return json(res, 200, { directories: listDirectories(listAllSessions({ limit: 500 })) });
   }
 
   if (req.method === 'POST' && url.pathname === '/directories/resolve') {
@@ -452,42 +508,43 @@ const server = http.createServer(async (req, res) => {
   const sessionMatch = url.pathname.match(/^\/sessions\/([0-9a-f-]{36})$/i);
   if (req.method === 'DELETE' && sessionMatch) {
     if (!checkAuth(req)) return unauthorized(res);
-    const result = deleteSession(sessionMatch[1]);
+    const owner = sessionOwner(sessionMatch[1]);
+    if (!owner) return json(res, 404, { ok: false, error: 'session not found' });
+    const result = owner.deleteSession(sessionMatch[1]);
     if (!result.ok) return json(res, 404, result);
     return json(res, 200, result);
   }
 
   if (req.method === 'GET' && sessionMatch) {
     if (!checkAuth(req)) return unauthorized(res);
-    const session = readSession(sessionMatch[1]);
+    const session = readAnySession(sessionMatch[1]);
     if (!session) return json(res, 404, { error: 'session not found' });
     return json(res, 200, session);
   }
 
   if (req.method === 'POST' && url.pathname === '/sessions') {
     if (!checkAuth(req)) return unauthorized(res);
-    return handleGrokTurn(req, res, {});
+    return handleTurn(req, res, {});
   }
 
   const messageMatch = url.pathname.match(/^\/sessions\/([0-9a-f-]{36})\/messages$/i);
   if (req.method === 'POST' && messageMatch) {
     if (!checkAuth(req)) return unauthorized(res);
-    const existing = readSession(messageMatch[1]);
+    const owner = sessionOwner(messageMatch[1]);
+    const existing = owner && readAnySession(messageMatch[1], owner);
     if (!existing) return json(res, 404, { error: 'session not found' });
-    return handleGrokTurn(req, res, { session: existing });
+    return handleTurn(req, res, { session: existing, owner });
   }
 
   const openMatch = url.pathname.match(/^\/sessions\/([0-9a-f-]{36})\/open$/i);
   if (req.method === 'POST' && openMatch) {
     if (!checkAuth(req)) return unauthorized(res);
-    const existing = readSession(openMatch[1]);
+    const owner = sessionOwner(openMatch[1]);
+    const existing = owner && readAnySession(openMatch[1], owner);
     if (!existing) return json(res, 404, { error: 'session not found' });
     try {
-      const result = await openSessionInTerminal({
-        sessionId: existing.id,
-        cwd: existing.cwd,
-      });
-      return json(res, 200, result);
+      const result = await runInTerminal({ cwd: existing.cwd, argv: owner.terminalArgv(existing.id) });
+      return json(res, 200, { ...result, sessionId: existing.id, provider: owner.id });
     } catch (err) {
       return json(res, 500, { error: err.message });
     }
@@ -545,6 +602,7 @@ const server = http.createServer(async (req, res) => {
         '/status',
         '/pick',
         '/place',
+        '/providers',
         '/sessions',
         'POST /sessions',
         'POST /command',
