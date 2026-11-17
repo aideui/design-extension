@@ -2426,6 +2426,13 @@ textarea {
   background: transparent;
 }
 
+.ai-menu-empty {
+  max-width: 220px;
+  padding: 8px;
+  color: var(--fg-grey-700);
+  font: 12px/1.5 Manrope, ui-sans-serif, system-ui, sans-serif;
+}
+
 .ai-menu .pick-menu-item .check {
   width: 14px;
   color: var(--fg-black);

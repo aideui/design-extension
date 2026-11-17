@@ -1468,50 +1468,60 @@ function renderDirectories() {
 const CHECK_ICON =
   '<svg class="check" viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+/** Ready providers in the order auto mode will try them (last used first). */
+let autoOrderIds = [];
+
 function autoTarget() {
-  return providers.find((provider) => provider.ready) || null;
+  return providers.find((provider) => provider.id === autoOrderIds[0]) || null;
 }
 
-function shortReason(item) {
-  if (item.ready) return '';
-  return item.installed === false ? '未安装' : '未登录';
+/** Only what is installed and signed in, plus the saved choice if it stopped working. */
+function pickerProviders() {
+  const ready = autoOrderIds.map((id) => providers.find((provider) => provider.id === id)).filter(Boolean);
+  const chosen = providers.find((provider) => provider.id === providerPref);
+  return chosen && !chosen.ready ? [...ready, chosen] : ready;
 }
 
 function renderAiPicker() {
   const chosen = providers.find((provider) => provider.id === providerPref);
   aiLabel.textContent = chosen ? chosen.label : '自动';
-  const target = chosen || autoTarget();
+  const target = autoTarget();
   aiBtn.title = chosen
     ? chosen.ready
       ? `由 ${chosen.label} 回答`
       : `${chosen.label}：${chosen.reason || '不可用'}`
     : target
       ? `自动：现在由 ${target.label} 回答，失败时换下一个`
-      : '自动：本机没有可用的 AI';
-  const items = [{ id: 'auto', label: '自动', ready: true, note: target && !chosen ? target.label : '' }, ...providers];
-  aiMenu.replaceChildren(
-    ...items.map((item) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `pick-menu-item${item.id === providerPref ? ' is-current' : ''}`;
-      btn.setAttribute('role', 'menuitemradio');
-      btn.setAttribute('aria-checked', String(item.id === providerPref));
-      btn.disabled = !item.ready && item.id !== providerPref;
-      if (!item.ready && item.reason) btn.title = item.reason;
-      const note = item.note || shortReason(item);
-      btn.innerHTML = `${item.id === providerPref ? CHECK_ICON : '<span class="check"></span>'}<span>${escapeHtml(
-        item.label
-      )}</span>${note ? `<span class="note">${escapeHtml(note)}</span>` : ''}`;
-      btn.addEventListener('click', async (event) => {
-        event.stopPropagation();
-        providerPref = item.id;
-        await chrome.storage.local.set({ provider: providerPref });
-        closeAiMenu();
-        renderAiPicker();
-      });
-      return btn;
-    })
-  );
+      : '自动：本机没有已登录的 AI 编程助手';
+  const items = [{ id: 'auto', label: '自动', ready: true, note: target ? target.label : '' }, ...pickerProviders()];
+  const rows = items.map((item) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `pick-menu-item${item.id === providerPref ? ' is-current' : ''}`;
+    btn.setAttribute('role', 'menuitemradio');
+    btn.setAttribute('aria-checked', String(item.id === providerPref));
+    btn.disabled = !item.ready && item.id !== providerPref;
+    if (!item.ready && item.reason) btn.title = item.reason;
+    const note = item.note || (item.ready ? '' : '不可用');
+    btn.innerHTML = `${item.id === providerPref ? CHECK_ICON : '<span class="check"></span>'}<span>${escapeHtml(
+      item.label
+    )}</span>${note ? `<span class="note">${escapeHtml(note)}</span>` : ''}`;
+    btn.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      providerPref = item.id;
+      await chrome.storage.local.set({ provider: providerPref });
+      closeAiMenu();
+      renderAiPicker();
+    });
+    return btn;
+  });
+  if (!autoOrderIds.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ai-menu-empty';
+    empty.textContent = '本机没有已登录的 AI 编程助手。装好并登录 Claude Code、Codex 或 Grok 中任一个。';
+    rows.push(empty);
+  }
+  aiMenu.replaceChildren(...rows);
 }
 
 function closeAiMenu() {
@@ -1523,6 +1533,7 @@ function closeAiMenu() {
 async function refreshProviders() {
   const data = await api('/providers');
   providers = data.providers || [];
+  autoOrderIds = data.auto || providers.filter((provider) => provider.ready).map((provider) => provider.id);
   renderAiPicker();
 }
 

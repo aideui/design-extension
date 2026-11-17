@@ -1,12 +1,12 @@
 # Forge Design
 
 <p align="center">
-  <img src="assets/social-preview.jpg" alt="Forge Design：在真实页面上点选组件，用本地 Grok 改界面" width="100%" />
+  <img src="assets/social-preview.jpg" alt="Forge Design：在真实页面上点选组件，用本机 AI 改界面" width="100%" />
 </p>
 
-**在真实网页上点选组件，用你本地的 AI（Grok、Claude Code 或 Codex）改界面。**
+**在真实网页上点选组件，用你本机的 AI 编程助手改界面。**
 
-Pick a component in real Chrome. Your local Grok, Claude Code or Codex edits it.
+Pick a component in real Chrome. Your local coding agent edits it.
 
 Forge Design 是 [Forge UI](https://forgeui.org) 的设计工具：Chrome 插件 + 本机桥接。你打开自己的应用，点一下要改的地方，侧边栏里的本机 AI 带着 selector 改文案、样式、交互，或把 Forge 组件写入源码。页面内容留在本机，不经过云端。
 
@@ -21,11 +21,11 @@ Forge Design 是 [Forge UI](https://forgeui.org) 的设计工具：Chrome 插件
 - **数据不出本机。** 桥接只听 `127.0.0.1`。截图、点选、页面文本都留在你这台机器上。
 - **不抢你正在看的标签。** 默认静默模式：跳转、点击、填表在专用 agent 页签后台跑。
 
-适合在真实 Chrome 里调试 Forge / Next 应用的人，也适合已经在用本地 Grok、Claude Code 或 Codex 的前端。
+适合在真实 Chrome 里调试 Forge / Next 应用的人，也适合已经在本机用 AI 编程助手的前端。
 
 ## 60 秒上手
 
-插件只是界面。对话和改页面需要本机桥接（连你本地的 AI）。需要已安装 Node.js，以及 [Grok CLI](https://grok.x.ai)、[Claude Code](https://claude.com/claude-code) 或 [Codex](https://github.com/openai/codex) 中至少一个并已登录。
+插件只是界面。对话和改页面需要本机桥接（连你本地的 AI）。需要已安装 Node.js，以及至少一个已登录的 AI 编程助手（目前支持 [Claude Code](https://claude.com/claude-code)、[Codex](https://github.com/openai/codex)、[Grok CLI](https://grok.x.ai)）。
 
 **1. 启动本机桥接**
 
@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/mai
 3. 说话，例如：「把这个按钮改成主色，文案改成保存」
 4. 或者点 **+** 从组件盘放置 Forge 组件，确认后再「写入源码」
 
-点 ··· 的「对话 AI」选用哪个：默认「自动」，按 Grok、Claude Code、Codex 的顺序用第一个能用的，某个 AI 还没回复就出错时自动换下一个；已有的对话固定由原来的 AI 接着答。侧边栏和终端共用各家的本机会话（`~/.grok/sessions`、`~/.claude/projects`、`~/.codex/sessions`），标题栏可拉取，会话旁的按钮能在 Terminal 里接着聊。
+发送键旁的「自动 ▾」只列出本机装好并登录的 AI，有哪个就显示哪个。默认「自动」：优先用你上次用的那个，某个 AI 还没回复就出错时换下一个；已有的对话固定由原来的 AI 接着答。各家的本机会话都能在标题栏拉取，会话旁的按钮能在 Terminal 里接着聊。
 
 ## 工作流
 
@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/forge-ui/forge-design-extension/mai
 flowchart LR
   You[你在真实页面上点选 / 放置] --> Ext[Chrome 插件]
   Ext -->|WebSocket| Bridge[本机桥接 :3847]
-  Bridge -->|HTTP| AI[本地 Grok / Claude Code / Codex]
+  Bridge -->|HTTP| AI[本机 AI 编程助手]
   AI -->|改源码 / 下指令| App[你的 Web 应用]
 ```
 
@@ -112,7 +112,7 @@ npm run cli -- snapshot
 | `last-pick` | 刚才点选的元素 |
 | `focus` | 把 agent 页签提到前台 |
 
-默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe。每个来调用的 AI 会话（Claude Code、Codex、Grok 或某个终端标签）自动用自己的后台标签，几个 AI 同时干活互不干扰，不用做任何设置；那个会话退出后它的标签会自动关掉。想固定用某个标签可以加 `--agent <名字>`。
+默认所有 `goto`、点击、填表都在专用 agent 页签后台执行。需要前台时传 `foreground: true` 或执行 `focus`。任何命令都可以加 `--tab <id>` 指定标签、`--frame <id>` 指定 iframe。每个来调用的 AI 会话（或某个终端标签）自动用自己的后台标签，几个 AI 同时干活互不干扰，不用做任何设置；那个会话退出后它的标签会自动关掉。想固定用某个标签可以加 `--agent <名字>`。
 
 你可以切过去看 agent 页签，它会接着干；在里面点击或打字就算你接管了，agent 会在新的后台标签里打开同一个网址继续。
 
