@@ -29,6 +29,7 @@ frames
 console [--errors] [--clear] [--limit n]
 network [--failed] [--clear] [--limit n]
 reload-extension
+close-tab [tabId]
 last-pick
 start-pick
 last-place
@@ -36,7 +37,13 @@ start-place
 raw <json>
 ```
 
-Every command also takes `--tab <id>` and `--frame <id>`.
+Every command also takes `--tab <id>`, `--frame <id>` and `--agent <name>`.
+
+## Your own tab
+
+Each agent name gets its own background tab, so parallel agents do not navigate each other's page. Set `FORGE_DESIGN_AGENT` (or pass `--agent`) to something unique per session; without it you share the `default` tab. The side panel already gives every conversation its own.
+
+The user may switch to your tab to watch; keep working. If they click or type in it, it becomes theirs: your next command runs in a new background tab at the same URL and its result has `tookOver` — page state and refs start fresh.
 
 ## Refs
 
@@ -52,7 +59,7 @@ If the page has iframes, the top-frame `snapshot` lists them under `frames`. Sna
 
 ## Screenshots
 
-The image goes to a file; the command prints its `path`. Chrome does not paint background tabs, so the agent tab needs `--foreground` (brings it to the front). A tab the user is looking at can be captured with `--tab <id>` without stealing anything. `--full` scrolls and stitches up to 8 screens, hiding fixed/sticky bars after the first; pages that scroll an inner container only give one screen.
+The image goes to a file; the command prints its `path`. Your background tab is captured in place through a short debugger session (Chrome shows its debugging bar for a moment); nothing comes to the front. `--foreground` switches to the tab instead. `--full` stitches up to 8 screens and hides fixed/sticky bars after the first; on app shells that scroll a main panel it stitches that panel (`scroller: true`).
 
 ## Console and network
 
