@@ -461,7 +461,13 @@ function connect() {
     }
 
     if (msg.type === 'command') {
-      const result = await handleCommand(msg.command, msg.args || {});
+      // Always answer: a dropped reply leaves the CLI waiting for the 30 s timeout.
+      let result;
+      try {
+        result = await handleCommand(msg.command, msg.args || {});
+      } catch (err) {
+        result = { error: err?.message || String(err) };
+      }
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
@@ -1042,6 +1048,12 @@ async function handleCommand(command, args) {
           focused: false,
           note: 'agent tab selected without stealing focus',
         };
+      }
+
+      case 'reload-extension': {
+        // Unpacked dev installs: pick up a new build without chrome://extensions.
+        setTimeout(() => chrome.runtime.reload(), 100);
+        return { ok: true, reloading: true, version: chrome.runtime.getManifest().version };
       }
 
       case 'focus': {

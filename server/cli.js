@@ -25,8 +25,17 @@ const STATE_PATH = path.join(ROOT, '.bridge-state.json');
 const PORT = Number(process.env.BRIDGE_PORT || 3847);
 const HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 
-function loadToken() {
+// Ask the running bridge first: a CLI from another checkout (e.g. an old
+// ~/.forge-design clone) has its own stale .bridge-state.json.
+async function loadToken() {
   if (process.env.BRIDGE_TOKEN) return process.env.BRIDGE_TOKEN;
+  try {
+    const res = await fetch(`http://${HOST}:${PORT}/token`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.token) return data.token;
+    }
+  } catch {}
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, 'utf8')).token;
   } catch {
@@ -35,7 +44,7 @@ function loadToken() {
 }
 
 async function request(pathname, { method = 'GET', body } = {}) {
-  const token = loadToken();
+  const token = await loadToken();
   const res = await fetch(`http://${HOST}:${PORT}${pathname}`, {
     method,
     headers: {
@@ -82,6 +91,7 @@ Commands:
   exists <selector>
   scroll [y]
   eval <expression>
+  reload-extension
   last-pick
   start-pick
   last-place
@@ -117,6 +127,7 @@ async function main() {
     case 'url':
     case 'title':
     case 'reload':
+    case 'reload-extension':
     case 'text':
       break;
     case 'snapshot':
