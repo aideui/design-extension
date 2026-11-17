@@ -122,8 +122,34 @@ test('updateExtensionDir skips a dirty git checkout', async () => {
   }
 });
 
-test('fetchLatestRelease reads tag and zip asset', async () => {
-  const release = await fetchLatestRelease(async () => ({
+test('fetchLatestRelease reads the tag from the releases/latest redirect', async () => {
+  const urls = [];
+  const release = await fetchLatestRelease(async (url) => {
+    urls.push(url);
+    return {
+      status: 302,
+      headers: new Headers({ location: 'https://github.com/forge-ui/forge-design-extension/releases/tag/v0.3.47' }),
+    };
+  });
+  assert.equal(urls.length, 1, 'no REST API call');
+  assert.equal(release.version, '0.3.47');
+  assert.equal(
+    release.zipUrl,
+    'https://github.com/forge-ui/forge-design-extension/releases/download/v0.3.47/forge-design-extension-v0.3.47.zip',
+  );
+});
+
+test('fetchLatestRelease explains the REST API rate limit', async () => {
+  await assert.rejects(
+    fetchLatestRelease(async (url) =>
+      url.includes('api.github.com') ? { ok: false, status: 403 } : { status: 200, headers: new Headers() },
+    ),
+    /限制了查询次数/,
+  );
+});
+
+test('fetchLatestRelease falls back to the API for tag and zip asset', async () => {
+  const release = await fetchLatestRelease(async (url) => url.includes('api.github.com') ? ({
     ok: true,
     json: async () => ({
       tag_name: 'v0.3.40',
@@ -134,7 +160,7 @@ test('fetchLatestRelease reads tag and zip asset', async () => {
         },
       ],
     }),
-  }));
+  }) : { status: 200, headers: new Headers() });
   assert.equal(release.version, '0.3.40');
   assert.equal(release.zipUrl, 'https://example.test/ext.zip');
 });
