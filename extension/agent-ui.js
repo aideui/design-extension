@@ -78,12 +78,7 @@
     const href = pickOriginalFaviconHref(links);
     if (href === originalFaviconHref && originalIconSnapshots.length) return;
     originalFaviconHref = href;
-    originalIconSnapshots = links.map((el) => ({
-      rel: el.getAttribute('rel') || 'icon',
-      href: el.href || el.getAttribute('href') || '',
-      type: el.getAttribute('type') || '',
-      sizes: el.getAttribute('sizes') || '',
-    }));
+    originalIconSnapshots = links.map((el) => el.href || el.getAttribute('href') || '');
     faviconHref = null;
     faviconBuild = null;
     faviconGeneration += 1;
@@ -507,15 +502,13 @@
 
   function installFaviconLinks(href) {
     if (!href || !document.head) return;
+    // Mute the page's own icons instead of removing them: React/Next own those <link> nodes and
+    // crash on the next navigation ("reading 'removeChild'") if they have been detached.
     document.querySelectorAll(ICON_LINK_SELECTOR).forEach((el) => {
-      if (isOurs(el)) return;
-      try {
-        el.remove();
-      } catch {
-        try {
-          el.href = href;
-        } catch {}
-      }
+      if (isOurs(el) || el.dataset.gcbMuted === '1') return;
+      el.dataset.gcbMuted = '1';
+      el.dataset.gcbMedia = el.getAttribute('media') ?? '';
+      el.setAttribute('media', 'not all');
     });
 
     let link = document.getElementById('gcb-agent-favicon');
@@ -574,17 +567,13 @@
     try {
       document.getElementById('gcb-agent-favicon')?.remove();
       document.getElementById('gcb-agent-favicon-shortcut')?.remove();
-      if (document.head) {
-        for (const snap of originalIconSnapshots) {
-          if (!snap.href) continue;
-          const link = document.createElement('link');
-          link.rel = snap.rel;
-          link.href = snap.href;
-          if (snap.type) link.type = snap.type;
-          if (snap.sizes) link.setAttribute('sizes', snap.sizes);
-          document.head.appendChild(link);
-        }
-      }
+      document.querySelectorAll('link[data-gcb-muted="1"]').forEach((el) => {
+        const media = el.dataset.gcbMedia;
+        if (media) el.setAttribute('media', media);
+        else el.removeAttribute('media');
+        delete el.dataset.gcbMuted;
+        delete el.dataset.gcbMedia;
+      });
     } catch {}
     applyingFavicon = false;
     faviconHref = null;
